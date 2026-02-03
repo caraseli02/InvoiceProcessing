@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import os
 
 
 class InvoiceConfig(BaseSettings):
@@ -77,6 +76,21 @@ class InvoiceConfig(BaseSettings):
     output_dir: Path = Field(
         default=Path.cwd() / "output",
         description="Default output directory",
+    )
+
+    api_host: str = Field(
+        default="0.0.0.0",
+        description="API host address",
+    )
+
+    api_port: int = Field(
+        default=8000,
+        description="API port",
+    )
+
+    api_keys: str = Field(
+        default="",
+        description="Comma-separated API keys for authentication",
     )
 
     def create_output_dirs(self) -> Path:

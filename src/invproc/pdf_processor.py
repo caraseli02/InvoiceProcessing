@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pdfplumber
 import pytesseract
-from PIL import Image
 
 from .config import InvoiceConfig
 

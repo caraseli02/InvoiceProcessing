@@ -24,9 +24,15 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
+api = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",
+]
 
 [project.scripts]
 invproc = "invproc.cli:app"
+invproc-api = "invproc.api:main"
 
 [build-system]
 requires = ["hatchling"]

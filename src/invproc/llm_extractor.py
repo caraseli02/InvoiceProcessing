@@ -1,7 +1,6 @@
 """LLM integration for invoice data extraction."""
 
 import logging
-from typing import Optional
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
