@@ -157,12 +157,22 @@ print(api_key)
 # Run all tests
 pytest tests/ -v
 
-# Run specific test file
+# Run specific test modules
 pytest tests/test_api.py -v
+pytest tests/test_cli.py -v
 
-# Run with coverage
-pytest --cov=src --cov-report=html
+# Run with coverage report
+pytest --cov=src/invproc --cov-report=html
+
+# View HTML coverage report
+open htmlcov/index.html
 ```
+
+**Test Coverage:**
+- API endpoints: 9 tests
+- CLI commands: 6 tests
+- End-to-end: 1 test
+- Total: 16 tests
 
 ## Linting & Type Checking
 

@@ -843,10 +843,9 @@ If issues occur after deployment:
 ### Testing
 - [x] Create `tests/test_api.py`
 - [x] Test API endpoints locally
-- [ ] Test Docker build and run
+- [ ] Test Docker build and run (SKIPPED - will add later)
 - [x] Test authentication
-- [x] Run all tests
-
+- [x] Run all tests (16 tests)
 ### Documentation
 - [ ] Update `README.md` with API usage
 - [ ] Document API endpoints
