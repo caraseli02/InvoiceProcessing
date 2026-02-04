@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import uuid
 from typing import Dict, Optional
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile, status
@@ -124,7 +125,9 @@ async def extract_invoice(
             detail="Only PDF files are supported",
         )
 
-    temp_pdf_path = Path(f"/tmp/{file.filename}")
+    temp_dir = _config.output_dir / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{file.filename}"
     try:
         content = await file.read()
         temp_pdf_path.write_bytes(content)

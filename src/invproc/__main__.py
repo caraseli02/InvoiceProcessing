@@ -5,8 +5,16 @@ import typer
 from invproc.cli import app as cli_app
 from invproc.config import get_config
 
+app = typer.Typer(
+    help="Invoice processing tool - CLI or API mode.",
+    no_args_is_help=False,
+)
+app.add_typer(cli_app, name="", help="Invoice processing CLI commands.")
 
+
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     mode: str = typer.Option(
         "cli",
         "--mode",
@@ -24,9 +32,11 @@ def main(
             port=config.api_port,
             reload=False,
         )
-    else:
-        cli_app()
+        raise typer.Exit()
+
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
 
 
 if __name__ == "__main__":
-    cli_app()
+    app()
