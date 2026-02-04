@@ -1,18 +1,3 @@
-FROM python:3.12-slim as builder
-
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    tesseract-ocr-ron \
-    tesseract-ocr-eng \
-    tesseract-ocr-rus \
-    libtesseract-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y \
@@ -20,11 +5,13 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-ron \
     tesseract-ocr-eng \
     tesseract-ocr-rus \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=builder /root/.local /root/.local
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

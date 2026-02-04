@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## 💬 Communication Standards
+
+**Be extremely concise. Sacrifice grammar for the sake of concision.**
+
+Apply throughout all interactions: plans, explanations, code reviews, feedback. Prioritize clarity & brevity over perfect English.
+
+---
+
 ## Commands
 
 ```bash

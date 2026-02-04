@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from invproc.api import app, load_api_keys
+from invproc.api import app
 from invproc.config import reload_config
 
 
@@ -13,14 +13,14 @@ from invproc.config import reload_config
 def setup_test_config():
     """Setup test configuration with API keys."""
     os.environ["API_KEYS"] = "test-api-key"
+    os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
     os.environ["MOCK"] = "true"
     reload_config()
-    load_api_keys()
     yield
     os.environ.pop("API_KEYS", None)
+    os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
     reload_config()
-    load_api_keys()
 
 
 @pytest.fixture
