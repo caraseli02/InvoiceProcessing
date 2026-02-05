@@ -93,6 +93,11 @@ class InvoiceConfig(BaseSettings):
         description="Comma-separated API keys for authentication",
     )
 
+    api_keys: str = Field(
+        default="",
+        description="Comma-separated API keys for authentication",
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)

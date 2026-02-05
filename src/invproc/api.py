@@ -33,12 +33,6 @@ from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
 
 
-# Dependency injection functions
-def get_config() -> InvoiceConfig:
-    """Get configuration instance."""
-    return InvoiceConfig()
-
-
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
     return PDFProcessor(config)
@@ -72,7 +66,8 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def verify_api_key(
-    api_key: Optional[str], valid_keys: Set[str] = Depends(get_api_keys)
+    api_key: Optional[str] = Security(api_key_header),
+    valid_keys: Set[str] = Depends(get_api_keys),
 ) -> str:
     """Verify API key against allowed keys."""
     if not api_key or api_key not in valid_keys:
@@ -165,7 +160,8 @@ async def extract_invoice(
     config = get_config()
     temp_dir = config.output_dir / "tmp"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{file.filename}"
+    safe_name = Path(file.filename).name
+    temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{safe_name}"
 
     try:
         # Offload blocking file read to thread pool
