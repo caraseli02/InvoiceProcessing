@@ -23,10 +23,18 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+    "requests>=2.31.0",
+]
+api = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",
+    "slowapi>=0.1.0",
 ]
 
 [project.scripts]
 invproc = "invproc.cli:app"
+invproc-api = "invproc.api:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -34,3 +42,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/invproc"]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: marks tests as end-to-end",
+]

@@ -100,7 +100,7 @@ def process(
         config.ocr_languages = lang
 
     if verbose:
-        console.print(f"[bold]Configuration:[/bold]")
+        console.print("[bold]Configuration:[/bold]")
         console.print(f"  Model: {config.model}")
         console.print(f"  Scale factor: {config.scale_factor}")
         console.print(f"  Tolerance: {config.tolerance}px")
@@ -178,6 +178,7 @@ def _extract_single(
 
     if debug:
         grid_file = config.output_dir / "grids" / f"{input_file.stem}_grid.txt"
+        grid_file.parent.mkdir(parents=True, exist_ok=True)
         grid_file.write_text(text_grid)
         console.print(f"[dim]Saved text grid to {grid_file}[/dim]")
 
@@ -211,9 +212,9 @@ def _check_consistency(results: list[InvoiceData]):
         )
     else:
         console.print(
-            f"\n[bold yellow]⚠️  INCONSISTENT RESULTS - manual review needed[/bold yellow]"
+            "\n[bold yellow]⚠️  INCONSISTENT RESULTS - manual review needed[/bold yellow]"
         )
-        console.print(f"[dim]Runs produced different outputs[/dim]")
+        console.print("[dim]Runs produced different outputs[/dim]")
 
 
 @app.command()
