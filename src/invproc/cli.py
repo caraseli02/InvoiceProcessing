@@ -178,6 +178,7 @@ def _extract_single(
 
     if debug:
         grid_file = config.output_dir / "grids" / f"{input_file.stem}_grid.txt"
+        grid_file.parent.mkdir(parents=True, exist_ok=True)
         grid_file.write_text(text_grid)
         console.print(f"[dim]Saved text grid to {grid_file}[/dim]")
 
