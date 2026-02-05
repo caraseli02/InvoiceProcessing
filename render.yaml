@@ -23,7 +23,10 @@ services:
       # Configure these in Render dashboard:
       # - OPENAI_API_KEY (required)
       # - API_KEYS (required, comma-separated)
-      # - ALLOWED_ORIGINS (optional, defaults to *)
+      # - ALLOWED_ORIGINS (optional, defaults to localhost domains + prod frontend)
+
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:3000,http://localhost:5173,https://lavio.vercel.app
       
       - key: SCALE_FACTOR
         value: 0.2

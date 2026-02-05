@@ -51,7 +51,8 @@ def get_validator() -> InvoiceValidator:
 def get_allowed_origins() -> list[str]:
     """Get allowed CORS origins from environment."""
     origins = os.getenv(
-        "ALLOWED_ORIGINS", "http://localhost:3000,https://yourdomain.com"
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:5173,https://lavio.vercel.app",
     )
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
@@ -92,8 +93,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize rate limiter
@@ -188,9 +189,12 @@ async def extract_invoice(
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+
+        logging.exception("PDF processing failed: %s", str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Processing failed",
+            detail=f"Processing failed: {str(e)}",
         )
     finally:
         # Offload blocking file delete to thread pool
