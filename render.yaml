@@ -1,0 +1,52 @@
+services:
+  # Web Service
+  - type: web
+    name: invoice-processing-api
+    env: docker
+    plan: free
+    
+    # Docker configuration
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    
+    # Runtime
+    region: oregon
+    
+    # Health check
+    healthCheckPath: /health
+    
+    # Environment variables (configure in Render dashboard)
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      
+      # Configure these in Render dashboard:
+      # - OPENAI_API_KEY (required)
+      # - API_KEYS (required, comma-separated)
+      # - ALLOWED_ORIGINS (optional, defaults to *)
+      
+      - key: SCALE_FACTOR
+        value: 0.2
+      
+      - key: TOLERANCE
+        value: 3
+      
+      - key: OCR_DPI
+        value: 300
+      
+      - key: OCR_LANGUAGES
+        value: ron+eng+rus
+      
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      
+      - key: LLM_TEMPERATURE
+        value: 0
+    
+    # Instance configuration (free tier)
+    numInstances: 1
+    
+    # Resource limits (free tier)
+    resources:
+      memory: 512Mi
+      cpu: 0.1

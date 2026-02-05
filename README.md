@@ -296,6 +296,39 @@ docker-compose logs -f
 docker-compose down
 ```
 
+## Cloud Deployment
+
+### Render (Free Tier)
+
+Quick deploy to Render with 1-click setup:
+
+**Steps:**
+1. Push code to GitHub
+2. Create Render web service from repo
+3. Add environment variables: `OPENAI_API_KEY`, `API_KEYS`
+4. Deploy
+
+**Detailed guide:** See [DEPLOYMENT.md](DEPLOYMENT.md)
+
+**API URL:** `https://invoice-processing-api.onrender.com`
+
+```bash
+# Test health check
+curl https://invoice-processing-api.onrender.com/health
+
+# Test extraction
+curl -X POST "https://invoice-processing-api.onrender.com/extract" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@invoice.pdf"
+```
+
+**Free tier limits:**
+- 512MB RAM, 0.1 CPU
+- Sleeps after 15min inactivity (cold start ~30s)
+- 10 requests/minute rate limit
+
+**Note:** For always-on service, upgrade to paid plan ($7/month).
+
 ## License
 
 MIT

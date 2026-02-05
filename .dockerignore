@@ -12,6 +12,8 @@ docs/
 .idea/
 *.log
 .env.local
+render.yaml
+todos/
 output/grids/*
 output/ocr_debug/*
 output/results/*
