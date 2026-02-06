@@ -20,7 +20,7 @@ class LLMExtractor:
             if config.openai_api_key:
                 self.client = OpenAI(api_key=config.openai_api_key)
             else:
-                self.client = None
+                self.client = None  # type: ignore[assignment]
 
     def parse_with_llm(self, text_grid: str) -> InvoiceData:
         """
@@ -65,7 +65,10 @@ Pay special attention to the column headers to correctly identify quantity vs pr
 
             import json
 
-            invoice_data_dict = json.loads(completion.choices[0].message.content)
+            content = completion.choices[0].message.content
+            if content is None:
+                raise ValueError("API returned no content")
+            invoice_data_dict = json.loads(content)
             return InvoiceData(**invoice_data_dict)
 
         except APIConnectionError as e:

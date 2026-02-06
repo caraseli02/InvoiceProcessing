@@ -20,7 +20,7 @@ def main(
         "--mode",
         help="Run mode: cli (default) or api",
     ),
-):
+) -> None:
     """Invoice processing tool - CLI or API mode."""
     if mode == "api":
         import uvicorn

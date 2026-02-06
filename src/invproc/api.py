@@ -1,16 +1,14 @@
 """FastAPI application for invoice processing service."""
 
 import os
-from contextlib import asynccontextmanager
 from pathlib import Path
 import uuid
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from fastapi import (
     Depends,
     FastAPI,
     File,
-    Header,
     HTTPException,
     Request,
     Security,
@@ -107,7 +105,7 @@ limiter = Limiter(
 
 @app.get("/health")
 @limiter.exempt
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """Health check endpoint for container orchestration."""
     return {
         "status": "healthy",
@@ -135,7 +133,7 @@ async def extract_invoice(
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     llm_extractor: LLMExtractor = Depends(get_llm_extractor),
     validator: InvoiceValidator = Depends(get_validator),
-):
+) -> InvoiceData:
     """
     Extract structured data from uploaded invoice PDF.
 
@@ -203,7 +201,9 @@ async def extract_invoice(
 
 
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+async def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
     """Rate limit exceeded handler."""
     return JSONResponse(
         status_code=429,
@@ -211,7 +211,7 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
-def main():
+def main() -> None:
     """Run API server."""
     import uvicorn
 

@@ -47,3 +47,12 @@ packages = ["src/invproc"]
 markers = [
     "e2e: marks tests as end-to-end",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+strict_optional = true
+check_untyped_defs = true

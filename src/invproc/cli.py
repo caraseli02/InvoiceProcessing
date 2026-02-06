@@ -82,7 +82,7 @@ def process(
         "--mock",
         help="Use mock data instead of calling OpenAI API (for testing without API key)",
     ),
-):
+) -> None:
     """Process invoice file and extract structured data."""
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -191,14 +191,14 @@ def _extract_single(
     return invoice_data
 
 
-def _save_output(invoice_data: InvoiceData, output_file: Path):
+def _save_output(invoice_data: InvoiceData, output_file: Path) -> None:
     """Save invoice data to JSON file."""
     with open(output_file, "w") as f:
         json.dump(invoice_data.model_dump(mode="json"), f, indent=2)
     console.print(f"[dim]Saved output to {output_file}[/dim]")
 
 
-def _check_consistency(results: list[InvoiceData]):
+def _check_consistency(results: list[InvoiceData]) -> None:
     """Check if all runs produced identical results."""
     if len(results) <= 1:
         return
@@ -218,7 +218,7 @@ def _check_consistency(results: list[InvoiceData]):
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version information."""
     console.print("invproc version 0.1.0")
 

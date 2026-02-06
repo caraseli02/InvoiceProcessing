@@ -2,6 +2,7 @@
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
+from invproc.config import get_config
 
 
 class Product(BaseModel):
@@ -43,10 +44,13 @@ class InvoiceData(BaseModel):
     @classmethod
     def validate_currency(cls, v: str) -> str:
         """Validate currency code."""
-        valid_currencies = {"EUR", "USD", "MDL", "RUB", "RON"}
+        config = get_config()
+        valid_currencies = config.get_allowed_currencies()
         v_upper = v.upper()
         if v_upper not in valid_currencies:
-            raise ValueError(f"Invalid currency: {v}. Valid: {valid_currencies}")
+            raise ValueError(
+                f"Invalid currency: {v}. Valid: {', '.join(sorted(valid_currencies))}"
+            )
         return v_upper
 
     @model_validator(mode="after")

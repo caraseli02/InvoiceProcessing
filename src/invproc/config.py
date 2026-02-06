@@ -66,6 +66,11 @@ class InvoiceConfig(BaseSettings):
         description="Tesseract OCR configuration",
     )
 
+    allowed_currencies: str = Field(
+        default="EUR,USD,MDL,RUB,RON",
+        description="Comma-separated list of allowed currency codes",
+    )
+
     temperature: float = Field(
         default=0.0,
         ge=0.0,
@@ -93,11 +98,6 @@ class InvoiceConfig(BaseSettings):
         description="Comma-separated API keys for authentication",
     )
 
-    api_keys: str = Field(
-        default="",
-        description="Comma-separated API keys for authentication",
-    )
-
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +105,12 @@ class InvoiceConfig(BaseSettings):
         (self.output_dir / "ocr_debug").mkdir(exist_ok=True)
         (self.output_dir / "results").mkdir(exist_ok=True)
         return self.output_dir
+
+    def get_allowed_currencies(self) -> set[str]:
+        """Parse allowed currencies from comma-separated string."""
+        return {
+            c.strip().upper() for c in self.allowed_currencies.split(",") if c.strip()
+        }
 
 
 _config_instance = None
