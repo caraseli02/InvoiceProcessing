@@ -1,9 +1,13 @@
 """Configuration management for invoice processing CLI."""
 
+import logging
 from pathlib import Path
 from typing import Optional
-from pydantic import Field
+import pycountry
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class InvoiceConfig(BaseSettings):
@@ -71,6 +75,35 @@ class InvoiceConfig(BaseSettings):
         description="Comma-separated list of allowed currency codes",
     )
 
+    @field_validator("allowed_currencies")
+    @classmethod
+    def validate_allowed_currencies_format(cls, v: str) -> str:
+        """Validate allowed currencies are valid ISO 4217 format."""
+        if not v:
+            raise ValueError("ALLOWED_CURRENCIES cannot be empty")
+
+        currencies = [c.strip().upper() for c in v.split(",") if c.strip()]
+
+        if not currencies:
+            raise ValueError("ALLOWED_CURRENCIES cannot be empty")
+
+        for currency in currencies:
+            if len(currency) != 3 or not currency.isalpha():
+                raise ValueError(
+                    f"Invalid currency code format: '{currency}'. "
+                    f"Must be 3-letter ISO 4217 codes (e.g., USD, EUR)."
+                )
+
+        valid_iso_codes = {c.alpha_3 for c in pycountry.currencies}
+        invalid = set(currencies) - valid_iso_codes
+        if invalid:
+            raise ValueError(
+                f"Invalid ISO 4217 codes: {', '.join(sorted(invalid))}. "
+                f"See https://en.wikipedia.org/wiki/ISO_4217"
+            )
+
+        return v
+
     temperature: float = Field(
         default=0.0,
         ge=0.0,
@@ -108,9 +141,54 @@ class InvoiceConfig(BaseSettings):
 
     def get_allowed_currencies(self) -> set[str]:
         """Parse allowed currencies from comma-separated string."""
-        return {
+        currencies = {
             c.strip().upper() for c in self.allowed_currencies.split(",") if c.strip()
         }
+
+        if not currencies:
+            logger.warning(
+                "ALLOWED_CURRENCIES produced empty set (value: '%s'). "
+                "Using safe default.",
+                self.allowed_currencies,
+            )
+            return {"EUR", "USD", "MDL", "RUB", "RON"}
+
+        return currencies
+
+    def validate_config(self) -> None:
+        """Validate configuration at startup. Raises ValueError if invalid."""
+        errors = []
+
+        # Validate ALLOWED_CURRENCIES
+        currencies = self.get_allowed_currencies()
+        if not currencies:
+            errors.append("ALLOWED_CURRENCIES cannot be empty")
+
+        # Validate OpenAI API key (if not using mock mode)
+        if not self.mock and not self.openai_api_key:
+            errors.append("OPENAI_API_KEY required when mock mode is disabled")
+
+        # Validate OCR config (basic check)
+        if self.ocr_config:
+            if ";" in self.ocr_config or "&" in self.ocr_config:
+                errors.append("OCR_CONFIG contains suspicious characters (; or &)")
+
+        # Validate numeric ranges
+        if self.temperature < 0 or self.temperature > 2:
+            errors.append("TEMPERATURE must be between 0 and 2")
+
+        if self.scale_factor <= 0:
+            errors.append("SCALE_FACTOR must be positive")
+
+        if self.ocr_dpi < 72 or self.ocr_dpi > 600:
+            errors.append("OCR_DPI must be between 72 and 600")
+
+        # Raise error if any validation failed
+        if errors:
+            raise ValueError(
+                "Configuration validation failed:\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
 
 
 _config_instance = None
@@ -121,6 +199,8 @@ def get_config() -> InvoiceConfig:
     global _config_instance
     if _config_instance is None:
         _config_instance = InvoiceConfig()
+        _config_instance.validate_config()
+        logger.info("Configuration validated successfully")
     return _config_instance
 
 

@@ -185,7 +185,7 @@ def _extract_single(
     llm_extractor = LLMExtractor(config=config)
     invoice_data = llm_extractor.parse_with_llm(text_grid)
 
-    validator = InvoiceValidator()
+    validator = InvoiceValidator(config)
     invoice_data = validator.validate_invoice(invoice_data)
 
     return invoice_data

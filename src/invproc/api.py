@@ -41,9 +41,9 @@ def get_llm_extractor(config: InvoiceConfig = Depends(get_config)) -> LLMExtract
     return LLMExtractor(config)
 
 
-def get_validator() -> InvoiceValidator:
+def get_validator(config: InvoiceConfig = Depends(get_config)) -> InvoiceValidator:
     """Get validator instance (per-request)."""
-    return InvoiceValidator()
+    return InvoiceValidator(config)
 
 
 def get_allowed_origins() -> list[str]:

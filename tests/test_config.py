@@ -62,3 +62,44 @@ def test_reload_config():
     assert "JPY" in config2.get_allowed_currencies()
     assert "CNY" in config2.get_allowed_currencies()
     del os.environ["ALLOWED_CURRENCIES"]
+
+def test_validate_config_empty_currencies():
+    """Test that empty ALLOWED_CURRENCIES raises validation error."""
+    with pytest.raises(ValueError, match="ALLOWED_CURRENCIES cannot be empty"):
+        config = InvoiceConfig(allowed_currencies="")
+        config.validate_config()
+
+def test_validate_config_invalid_format():
+    """Test that invalid currency format raises validation error."""
+    with pytest.raises(ValueError, match="Invalid currency code format"):
+        config = InvoiceConfig(allowed_currencies="US,EURRO")
+        config.validate_config()
+
+def test_validate_config_invalid_iso_codes():
+    """Test that invalid ISO 4217 codes raise validation error."""
+    with pytest.raises(ValueError, match="Invalid ISO 4217 codes"):
+        config = InvoiceConfig(allowed_currencies="XXX,YYY,ZZZ")
+        config.validate_config()
+
+def test_validate_config_missing_api_key():
+    """Test that missing API key when not in mock mode raises validation error."""
+    with pytest.raises(ValueError, match="OPENAI_API_KEY required"):
+        config = InvoiceConfig(mock=False, openai_api_key=None)
+        config.validate_config()
+
+def test_validate_config_suspicious_ocr_config():
+    """Test that suspicious OCR config characters raise validation error."""
+    with pytest.raises(ValueError, match="OCR_CONFIG contains suspicious characters"):
+        config = InvoiceConfig(ocr_config="--oem 1; rm -rf /")
+        config.validate_config()
+
+def test_validate_config_valid():
+    """Test that valid configuration passes validation."""
+    config = InvoiceConfig(
+        allowed_currencies="EUR,USD",
+        mock=True,
+        temperature=0.5,
+        scale_factor=0.2
+    )
+    config.validate_config()  # Should not raise
+
