@@ -1,15 +1,25 @@
 """Invoice validation and confidence scoring."""
 
 import logging
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 from .models import Product, InvoiceData
+
+if TYPE_CHECKING:
+    from .config import InvoiceConfig
 
 logger = logging.getLogger(__name__)
 
 
 class InvoiceValidator:
     """Validate and score invoice data."""
+
+    def __init__(self, config: "InvoiceConfig") -> None:
+        """Initialize validator with configuration."""
+        from .config import InvoiceConfig
+
+        self.config: InvoiceConfig = config
+        self.allowed_currencies: set[str] = config.get_allowed_currencies()
 
     def validate_invoice(self, data: InvoiceData) -> InvoiceData:
         """
@@ -21,6 +31,15 @@ class InvoiceValidator:
         Returns:
             InvoiceData with validated confidence scores
         """
+        # Validate currency
+        v_upper = data.currency.upper()
+        if v_upper not in self.allowed_currencies:
+            raise ValueError(
+                f"Invalid currency: {data.currency}. "
+                f"Valid: {', '.join(sorted(self.allowed_currencies))}"
+            )
+        data.currency = v_upper
+
         for product in data.products:
             confidence = self._score_product(product)
             product.confidence_score = confidence

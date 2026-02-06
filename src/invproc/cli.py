@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.progress import track
 
-from .config import get_config, reload_config, InvoiceConfig
+from .config import get_config_unvalidated, reload_config, InvoiceConfig
 from .pdf_processor import PDFProcessor
 from .llm_extractor import LLMExtractor
 from .validator import InvoiceValidator
@@ -82,14 +82,14 @@ def process(
         "--mock",
         help="Use mock data instead of calling OpenAI API (for testing without API key)",
     ),
-):
+) -> None:
     """Process invoice file and extract structured data."""
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    config = get_config()
+    config = get_config_unvalidated()
     config.mock = mock
 
     if output_file:
@@ -98,6 +98,7 @@ def process(
 
     if lang:
         config.ocr_languages = lang
+    config.validate_config()
 
     if verbose:
         console.print("[bold]Configuration:[/bold]")
@@ -185,20 +186,20 @@ def _extract_single(
     llm_extractor = LLMExtractor(config=config)
     invoice_data = llm_extractor.parse_with_llm(text_grid)
 
-    validator = InvoiceValidator()
+    validator = InvoiceValidator(config)
     invoice_data = validator.validate_invoice(invoice_data)
 
     return invoice_data
 
 
-def _save_output(invoice_data: InvoiceData, output_file: Path):
+def _save_output(invoice_data: InvoiceData, output_file: Path) -> None:
     """Save invoice data to JSON file."""
     with open(output_file, "w") as f:
         json.dump(invoice_data.model_dump(mode="json"), f, indent=2)
     console.print(f"[dim]Saved output to {output_file}[/dim]")
 
 
-def _check_consistency(results: list[InvoiceData]):
+def _check_consistency(results: list[InvoiceData]) -> None:
     """Check if all runs produced identical results."""
     if len(results) <= 1:
         return
@@ -218,7 +219,7 @@ def _check_consistency(results: list[InvoiceData]):
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version information."""
     console.print("invproc version 0.1.0")
 

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class PDFProcessor:
     """Process PDF files with native text extraction and OCR fallback."""
 
-    def __init__(self, config: InvoiceConfig):
+    def __init__(self, config: InvoiceConfig) -> None:
         self.config = config
 
     def extract_content(
@@ -31,7 +31,7 @@ class PDFProcessor:
         Returns:
             (text_grid, metadata) tuple
         """
-        metadata = {
+        metadata: Dict[str, Any] = {
             "pages_processed": 0,
             "pages_ocr": 0,
             "method": "native",
@@ -92,7 +92,7 @@ class PDFProcessor:
         if not words:
             return ""
 
-        lines = {}
+        lines: Dict[float, List[Dict[str, Any]]] = {}
         tolerance = self.config.tolerance
         scale_factor = self.config.scale_factor
 
@@ -131,7 +131,9 @@ class PDFProcessor:
 
         return "\n".join(grid_output)
 
-    def _perform_ocr(self, page, debug: bool, page_num: int, file_path: Path) -> str:
+    def _perform_ocr(
+        self, page: Any, debug: bool, page_num: int, file_path: Path
+    ) -> str:
         """
         OCR fallback for scanned pages.
 
@@ -150,7 +152,7 @@ class PDFProcessor:
             im = page.to_image(resolution=self.config.ocr_dpi)
             lang_str = self.config.ocr_languages
 
-            text = pytesseract.image_to_string(
+            text: str = pytesseract.image_to_string(
                 im.original,
                 lang=lang_str,
                 config=self.config.ocr_config,

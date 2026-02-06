@@ -1,7 +1,7 @@
 """Pydantic data models for invoice data."""
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class Product(BaseModel):
@@ -38,16 +38,6 @@ class InvoiceData(BaseModel):
     total_amount: float = Field(..., gt=0, description="Total invoice amount")
     currency: str = Field(..., description="Currency code (EUR, USD, MDL, RUB)")
     products: List[Product] = Field(..., min_length=0, description="List of products")
-
-    @field_validator("currency")
-    @classmethod
-    def validate_currency(cls, v: str) -> str:
-        """Validate currency code."""
-        valid_currencies = {"EUR", "USD", "MDL", "RUB", "RON"}
-        v_upper = v.upper()
-        if v_upper not in valid_currencies:
-            raise ValueError(f"Invalid currency: {v}. Valid: {valid_currencies}")
-        return v_upper
 
     @model_validator(mode="after")
     def validate_totals(self) -> "InvoiceData":

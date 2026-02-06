@@ -36,3 +36,6 @@ jobs:
         env:
           MOCK: "true"
         run: python -m pytest
+
+      - name: Type check with mypy
+        run: mypy src/
