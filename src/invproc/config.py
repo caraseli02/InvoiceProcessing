@@ -204,6 +204,14 @@ def get_config() -> InvoiceConfig:
     return _config_instance
 
 
+def get_config_unvalidated() -> InvoiceConfig:
+    """Get or create global configuration instance without validation."""
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = InvoiceConfig()
+    return _config_instance
+
+
 def reload_config() -> InvoiceConfig:
     """Reload configuration (useful for testing)."""
     global _config_instance

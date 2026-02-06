@@ -14,12 +14,12 @@ logger = logging.getLogger(__name__)
 class InvoiceValidator:
     """Validate and score invoice data."""
 
-    def __init__(self, config: "InvoiceConfig"):
+    def __init__(self, config: "InvoiceConfig") -> None:
         """Initialize validator with configuration."""
         from .config import InvoiceConfig
 
         self.config: InvoiceConfig = config
-        self.allowed_currencies = config.get_allowed_currencies()
+        self.allowed_currencies: set[str] = config.get_allowed_currencies()
 
     def validate_invoice(self, data: InvoiceData) -> InvoiceData:
         """

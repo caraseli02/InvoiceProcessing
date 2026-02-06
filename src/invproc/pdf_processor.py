@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class PDFProcessor:
     """Process PDF files with native text extraction and OCR fallback."""
 
-    def __init__(self, config: InvoiceConfig):
+    def __init__(self, config: InvoiceConfig) -> None:
         self.config = config
 
     def extract_content(

@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.progress import track
 
-from .config import get_config, reload_config, InvoiceConfig
+from .config import get_config_unvalidated, reload_config, InvoiceConfig
 from .pdf_processor import PDFProcessor
 from .llm_extractor import LLMExtractor
 from .validator import InvoiceValidator
@@ -89,7 +89,7 @@ def process(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    config = get_config()
+    config = get_config_unvalidated()
     config.mock = mock
 
     if output_file:
@@ -98,6 +98,7 @@ def process(
 
     if lang:
         config.ocr_languages = lang
+    config.validate_config()
 
     if verbose:
         console.print("[bold]Configuration:[/bold]")

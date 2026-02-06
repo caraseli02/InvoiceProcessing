@@ -1,6 +1,7 @@
 """LLM integration for invoice data extraction."""
 
 import logging
+from typing import Optional
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
@@ -13,14 +14,13 @@ logger = logging.getLogger(__name__)
 class LLMExtractor:
     """Extract structured invoice data using OpenAI LLM."""
 
-    def __init__(self, config: InvoiceConfig):
+    def __init__(self, config: InvoiceConfig) -> None:
         self.config = config
         self.mock = config.mock
+        self.client: Optional[OpenAI] = None
         if not self.mock:
             if config.openai_api_key:
                 self.client = OpenAI(api_key=config.openai_api_key)
-            else:
-                self.client = None  # type: ignore[assignment]
 
     def parse_with_llm(self, text_grid: str) -> InvoiceData:
         """
