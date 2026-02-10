@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 import uuid
-from typing import Any, Dict, Optional, Set
+from typing import Any, BinaryIO, Dict, Optional, Set, cast
 
 from fastapi import (
     Depends,
@@ -29,6 +29,9 @@ from invproc.llm_extractor import LLMExtractor
 from invproc.pdf_processor import PDFProcessor
 from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
+
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
@@ -75,6 +78,34 @@ def verify_api_key(
             detail="Invalid or missing API key",
         )
     return api_key
+
+
+def _save_upload_with_limit(
+    source: BinaryIO, destination: Path, max_file_size: int
+) -> int:
+    """Stream upload to disk while enforcing max file size."""
+    source.seek(0)
+    total_bytes = 0
+
+    with destination.open("wb") as output_file:
+        while True:
+            chunk = source.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+
+            total_bytes += len(chunk)
+            if total_bytes > max_file_size:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=(
+                        f"File too large: {total_bytes:,} bytes "
+                        f"(max {max_file_size:,} = 50 MB)"
+                    ),
+                )
+
+            output_file.write(chunk)
+
+    return total_bytes
 
 
 # Initialize app and rate limiter
@@ -163,11 +194,10 @@ async def extract_invoice(
     temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{safe_name}"
 
     try:
-        # Offload blocking file read to thread pool
-        content = await file.read()
-
-        # Offload blocking file write to thread pool
-        await run_in_threadpool(temp_pdf_path.write_bytes, content)
+        # Stream upload to disk and enforce size limit by actual file bytes.
+        await run_in_threadpool(
+            _save_upload_with_limit, file.file, temp_pdf_path, MAX_FILE_SIZE
+        )
 
         # Offload CPU-intensive PDF processing to thread pool
         text_grid, metadata = await run_in_threadpool(
@@ -182,7 +212,7 @@ async def extract_invoice(
             validator.validate_invoice, invoice_data
         )
 
-        return validated_invoice
+        return cast(InvoiceData, validated_invoice)
 
     except HTTPException:
         raise
