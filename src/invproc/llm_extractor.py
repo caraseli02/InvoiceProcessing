@@ -1,7 +1,7 @@
 """LLM integration for invoice data extraction."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
@@ -9,6 +9,10 @@ from .config import InvoiceConfig
 from .models import InvoiceData, Product
 
 logger = logging.getLogger(__name__)
+
+
+class LLMOutputIntegrityError(ValueError):
+    """Raised when LLM output is structurally incomplete for safe extraction."""
 
 
 class LLMExtractor:
@@ -20,7 +24,9 @@ class LLMExtractor:
         self.client: Optional[OpenAI] = None
         if not self.mock:
             if config.openai_api_key:
-                self.client = OpenAI(api_key=config.openai_api_key, timeout=60.0)
+                self.client = OpenAI(
+                    api_key=config.openai_api_key, timeout=config.openai_timeout_sec
+                )
 
     def parse_with_llm(self, text_grid: str) -> InvoiceData:
         """
@@ -69,6 +75,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
             if content is None:
                 raise ValueError("API returned no content")
             invoice_data_dict = json.loads(content)
+            invoice_data_dict = self._normalize_invoice_payload(invoice_data_dict)
             return InvoiceData(**invoice_data_dict)
 
         except APIConnectionError as e:
@@ -83,6 +90,100 @@ Pay special attention to the column headers to correctly identify quantity vs pr
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
             raise
+
+    def _normalize_invoice_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize LLM JSON payload before strict Pydantic validation."""
+        if not isinstance(payload, dict):
+            raise ValueError("LLM payload must be a JSON object")
+
+        products_raw = payload.get("products", [])
+        cleaned_products: list[dict[str, Any]] = []
+        dropped_products = 0
+
+        if not isinstance(products_raw, list):
+            products_raw = []
+
+        for product in products_raw:
+            if not isinstance(product, dict):
+                dropped_products += 1
+                continue
+
+            quantity = self._to_float(product.get("quantity"))
+            unit_price = self._to_float(product.get("unit_price"))
+            total_price = self._to_float(product.get("total_price"))
+            name_raw = product.get("name")
+            name = name_raw.strip() if isinstance(name_raw, str) else ""
+
+            # Skip malformed product rows instead of failing entire invoice.
+            if not name or quantity is None or unit_price is None or total_price is None:
+                dropped_products += 1
+                continue
+
+            confidence_raw = self._to_float(product.get("confidence_score"))
+            confidence = confidence_raw if confidence_raw is not None else 0.5
+            confidence = max(0.0, min(1.0, confidence))
+
+            raw_code = product.get("raw_code")
+            normalized_code = None
+            if raw_code is not None:
+                code_text = str(raw_code).strip()
+                normalized_code = code_text or None
+
+            cleaned_products.append(
+                {
+                    "raw_code": normalized_code,
+                    "name": name,
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "total_price": total_price,
+                    "confidence_score": confidence,
+                }
+            )
+
+        if dropped_products:
+            logger.warning(
+                "Dropped %s malformed product rows from LLM output", dropped_products
+            )
+            raise LLMOutputIntegrityError(
+                f"LLM returned {dropped_products} malformed product rows"
+            )
+
+        normalized = dict(payload)
+        normalized["products"] = cleaned_products
+
+        total_amount = self._to_float(normalized.get("total_amount"))
+        if total_amount is not None:
+            normalized["total_amount"] = total_amount
+
+        currency = normalized.get("currency")
+        if currency is None:
+            normalized["currency"] = ""
+        else:
+            normalized["currency"] = str(currency).strip()
+
+        for key in ("supplier", "invoice_number", "date"):
+            value = normalized.get(key)
+            if value is not None and not isinstance(value, str):
+                normalized[key] = str(value)
+
+        return normalized
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        """Convert model output value to float when possible."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace(" ", "").replace(",", ".")
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
 
     def _get_mock_data(self) -> InvoiceData:
         """Generate mock invoice data for testing without API."""

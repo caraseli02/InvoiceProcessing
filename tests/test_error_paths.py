@@ -9,7 +9,7 @@ from io import BytesIO
 
 from fastapi.testclient import TestClient
 
-from invproc.api import app
+from invproc.api import app, limiter
 from invproc.pdf_processor import PDFProcessor
 from invproc.llm_extractor import LLMExtractor
 from invproc.config import get_config, reload_config
@@ -23,11 +23,13 @@ def setup_test_config():
     os.environ["MOCK"] = "true"
     os.environ["API_KEYS"] = "test-api-key"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
+    limiter.reset()
     reload_config()
     yield
     os.environ.pop("MOCK", None)
     os.environ.pop("API_KEYS", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
+    limiter.reset()
     reload_config()
 
 
@@ -187,6 +189,46 @@ def test_null_api_response_content(llm_extractor):
 
         with pytest.raises(ValueError, match="API returned no content"):
             llm_extractor.parse_with_llm("test grid")
+
+
+def test_llm_filters_malformed_product_rows(llm_extractor):
+    """Test malformed rows with null numeric fields raise integrity error."""
+    llm_extractor.mock = False
+
+    payload = {
+        "supplier": "Test Supplier",
+        "invoice_number": "INV-1",
+        "date": "10-02-2026",
+        "total_amount": 100.0,
+        "currency": "MDL",
+        "products": [
+            {
+                "raw_code": "123",
+                "name": "Valid Product",
+                "quantity": 2,
+                "unit_price": 10,
+                "total_price": 20,
+                "confidence_score": 0.9,
+            },
+            {
+                "raw_code": "999",
+                "name": "Broken Product",
+                "quantity": None,
+                "unit_price": None,
+                "total_price": 0,
+                "confidence_score": 0.1,
+            },
+        ],
+    }
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content=json.dumps(payload)))]
+
+    llm_extractor.client = Mock()
+    llm_extractor.client.chat.completions.create.return_value = mock_response
+
+    with pytest.raises(ValueError, match="malformed product rows"):
+        llm_extractor.parse_with_llm("test grid")
 
 
 def test_api_file_size_guard_large_file(api_client):

@@ -2,11 +2,13 @@
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from invproc.api import app
+from invproc.api import app, limiter
 from invproc.config import reload_config
+from invproc.llm_extractor import LLMOutputIntegrityError
 
 
 @pytest.fixture(autouse=True)
@@ -15,13 +17,17 @@ def setup_test_config():
     os.environ["API_KEYS"] = "test-api-key"
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
     os.environ["MOCK"] = "true"
+    os.environ["DEV_BYPASS_API_KEY"] = "false"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
+    limiter.reset()
     reload_config()
     yield
     os.environ.pop("API_KEYS", None)
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
+    os.environ.pop("DEV_BYPASS_API_KEY", None)
+    limiter.reset()
     reload_config()
 
 
@@ -118,6 +124,37 @@ def test_extract_empty_api_key(client):
             headers={"X-API-Key": ""},
         )
     assert response.status_code == 401
+
+
+def test_extract_without_auth_with_dev_bypass(client):
+    """Test extraction without API key when dev bypass is enabled."""
+    os.environ["DEV_BYPASS_API_KEY"] = "true"
+    reload_config()
+    try:
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            response = client.post(
+                "/extract", files={"file": ("test.pdf", f, "application/pdf")}
+            )
+        assert response.status_code == 200
+    finally:
+        os.environ.pop("DEV_BYPASS_API_KEY", None)
+        reload_config()
+
+
+def test_extract_returns_422_for_malformed_llm_output(client):
+    """Test extraction returns 422 when LLM output has malformed product rows."""
+    with patch(
+        "invproc.llm_extractor.LLMExtractor.parse_with_llm",
+        side_effect=LLMOutputIntegrityError("LLM returned 2 malformed product rows"),
+    ):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            response = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+    assert response.status_code == 422
+    assert "malformed product rows" in response.json()["detail"]
 
 
 def test_health_check_structure(client):

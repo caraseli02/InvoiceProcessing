@@ -200,6 +200,7 @@ async def concurrent_test():
 - [FastAPI Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
 - [Thread Safety in Python](https://docs.python.org/3/faq/threading.html)
 - [Concurrency in Python](https://docs.python.org/3/library/asyncio-sync)
+- [Malformed LLM Product Rows Caused 500s and Test Limiter Flakes](./llm-malformed-product-rows-500-and-test-limiter-flakes-20260210.md)
 
 ## Verification
 

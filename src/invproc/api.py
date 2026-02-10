@@ -23,9 +23,10 @@ from fastapi.security import APIKeyHeader
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from openai import APITimeoutError
 
 from invproc.config import InvoiceConfig, get_config
-from invproc.llm_extractor import LLMExtractor
+from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 from invproc.pdf_processor import PDFProcessor
 from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
@@ -52,7 +53,10 @@ def get_allowed_origins() -> list[str]:
     """Get allowed CORS origins from environment."""
     origins = os.getenv(
         "ALLOWED_ORIGINS",
-        "http://localhost:3000,http://localhost:5173,https://lavio.vercel.app",
+        (
+            "http://localhost:3000,http://localhost:5173,"
+            "http://127.0.0.1:5173,https://lavio.vercel.app"
+        ),
     )
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
@@ -69,8 +73,12 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 def verify_api_key(
     api_key: Optional[str] = Security(api_key_header),
     valid_keys: Set[str] = Depends(get_api_keys),
+    config: InvoiceConfig = Depends(get_config),
 ) -> str:
     """Verify API key against allowed keys."""
+    if config.dev_bypass_api_key:
+        return "dev-bypass"
+
     if not api_key or api_key not in valid_keys:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -151,8 +159,10 @@ async def health_check() -> Dict[str, Any]:
     responses={
         401: {"description": "Invalid API key"},
         400: {"description": "Invalid PDF file"},
+        422: {"description": "Unprocessable extraction output"},
         413: {"description": "PDF exceeds configured size limit"},
         429: {"description": "Rate limit exceeded"},
+        504: {"description": "Model request timed out"},
         500: {"description": "Internal server error"},
     },
 )
@@ -218,6 +228,16 @@ async def extract_invoice(
 
     except HTTPException:
         raise
+    except LLMOutputIntegrityError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(e),
+        )
+    except APITimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Model request timed out. Please retry.",
+        )
     except Exception as e:
         import logging
 
