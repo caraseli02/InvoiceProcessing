@@ -198,6 +198,7 @@ uvicorn.run(
 
 - Issue #001: Global State Thread Safety - Dependency injection enables thread-safe async
 - Issue #004: No Rate Limiting - Combined with async improves scalability
+- Multipart upload size enforcement false-positive/OOM-risk fix (2026-02-10): [multipart-upload-size-enforcement-system-20260210.md](../security-issues/multipart-upload-size-enforcement-system-20260210.md)
 
 ### Related Documentation
 
