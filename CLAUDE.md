@@ -10,6 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Apply throughout all interactions: plans, explanations, code reviews, feedback. Prioritize clarity & brevity over perfect English.
 
+## Git Hook Policy
+
+- Hook setup (run once per clone): `git config core.hooksPath .githooks`
+- Do not use `git commit --no-verify` by default.
+- Use `--no-verify` only with explicit user approval in the current thread.
+- If a hook blocks a commit, fix hook/config/staged files first, then retry normal commit.
+
 ---
 
 ## Commands

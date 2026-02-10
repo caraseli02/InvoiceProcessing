@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Block commits of sensitive credential-like files while allowing templates
+# like .env.example that are meant to be versioned.
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+is_blocked_file() {
+  local file="$1"
+  local base
+  base="$(basename "$file")"
+
+  case "$base" in
+    # Explicitly allow committed env templates.
+    .env.example | *.env.example)
+      return 1
+      ;;
+    # Block env-like secrets by default.
+    .env | .env.* | *.env | *.env.*)
+      return 0
+      ;;
+    # Common private key/cert formats.
+    *.pem | *.key | *.p12 | *.pfx)
+      return 0
+      ;;
+    # Common secret payload files.
+    credentials.json | secrets.yml)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  if is_blocked_file "$file"; then
+    echo "🚨 SECURITY ALERT: Attempting to commit sensitive file!"
+    echo
+    echo "Blocked file: $file"
+    echo
+    echo "This file may contain credentials or secrets."
+    echo "Remove it from staging (git restore --staged <file>) and retry."
+    exit 1
+  fi
+done <<< "$staged_files"
+
+exit 0
