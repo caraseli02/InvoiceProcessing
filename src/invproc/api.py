@@ -24,13 +24,12 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from invproc.config import get_config, InvoiceConfig
+from invproc.config import InvoiceConfig, get_config
 from invproc.llm_extractor import LLMExtractor
 from invproc.pdf_processor import PDFProcessor
 from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
@@ -99,7 +98,7 @@ def _save_upload_with_limit(
                     status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     detail=(
                         f"File too large: {total_bytes:,} bytes "
-                        f"(max {max_file_size:,} = 50 MB)"
+                        f"(max {max_file_size:,} bytes)"
                     ),
                 )
 
@@ -152,6 +151,7 @@ async def health_check() -> Dict[str, Any]:
     responses={
         401: {"description": "Invalid API key"},
         400: {"description": "Invalid PDF file"},
+        413: {"description": "PDF exceeds configured size limit"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
@@ -194,9 +194,11 @@ async def extract_invoice(
     temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{safe_name}"
 
     try:
+        max_file_size = config.max_pdf_size_mb * 1024 * 1024
+
         # Stream upload to disk and enforce size limit by actual file bytes.
         await run_in_threadpool(
-            _save_upload_with_limit, file.file, temp_pdf_path, MAX_FILE_SIZE
+            _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
         # Offload CPU-intensive PDF processing to thread pool

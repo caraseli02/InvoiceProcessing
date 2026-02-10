@@ -15,11 +15,13 @@ def setup_test_config():
     os.environ["API_KEYS"] = "test-api-key"
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
     os.environ["MOCK"] = "true"
+    os.environ["MAX_PDF_SIZE_MB"] = "2"
     reload_config()
     yield
     os.environ.pop("API_KEYS", None)
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
+    os.environ.pop("MAX_PDF_SIZE_MB", None)
     reload_config()
 
 

@@ -22,10 +22,12 @@ def setup_test_config():
     """Setup test configuration."""
     os.environ["MOCK"] = "true"
     os.environ["API_KEYS"] = "test-api-key"
+    os.environ["MAX_PDF_SIZE_MB"] = "2"
     reload_config()
     yield
     os.environ.pop("MOCK", None)
     os.environ.pop("API_KEYS", None)
+    os.environ.pop("MAX_PDF_SIZE_MB", None)
     reload_config()
 
 
@@ -188,9 +190,9 @@ def test_null_api_response_content(llm_extractor):
 
 
 def test_api_file_size_guard_large_file(api_client):
-    """Test API rejects files larger than 50MB limit."""
-    # Create 51 MB file (exceeds 50 MB limit)
-    large_file = BytesIO(b"x" * (51 * 1024 * 1024))
+    """Test API rejects files larger than configured 2MB limit."""
+    # Create 3 MB file (exceeds 2 MB limit)
+    large_file = BytesIO(b"x" * (3 * 1024 * 1024))
     large_file.name = "large.pdf"
 
     response = api_client.post(
@@ -203,9 +205,9 @@ def test_api_file_size_guard_large_file(api_client):
 
 
 def test_api_file_size_guard_exactly_limit(api_client):
-    """Test API accepts files at exactly 50MB limit."""
-    # Create file exactly at the 50 MB limit
-    limit_file = BytesIO(b"x" * (50 * 1024 * 1024))
+    """Test API accepts files at exactly configured 2MB limit."""
+    # Create file exactly at the 2 MB limit
+    limit_file = BytesIO(b"x" * (2 * 1024 * 1024))
     limit_file.name = "limit.pdf"
 
     response = api_client.post(

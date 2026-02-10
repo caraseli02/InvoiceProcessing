@@ -38,7 +38,10 @@ services:
         value: 3
       
       - key: OCR_DPI
-        value: 300
+        value: 150
+
+      - key: MAX_PDF_SIZE_MB
+        value: 2
       
       - key: OCR_LANGUAGES
         value: ron+eng+rus

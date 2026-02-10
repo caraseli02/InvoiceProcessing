@@ -69,10 +69,17 @@ class InvoiceConfig(BaseSettings):
     )
 
     ocr_dpi: int = Field(
-        default=300,
+        default=150,
         ge=150,
         le=600,
         description="OCR resolution in DPI",
+    )
+
+    max_pdf_size_mb: int = Field(
+        default=2,
+        ge=1,
+        le=50,
+        description="Maximum PDF upload size in megabytes for API extraction",
     )
 
     ocr_languages: str = Field(
@@ -202,6 +209,9 @@ class InvoiceConfig(BaseSettings):
 
         if self.ocr_dpi < 72 or self.ocr_dpi > 600:
             errors.append("OCR_DPI must be between 72 and 600")
+
+        if self.max_pdf_size_mb < 1 or self.max_pdf_size_mb > 50:
+            errors.append("MAX_PDF_SIZE_MB must be between 1 and 50")
 
         # Raise error if any validation failed
         if errors:
