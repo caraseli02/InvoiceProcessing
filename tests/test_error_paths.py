@@ -204,8 +204,8 @@ def test_api_file_size_guard_large_file(api_client):
 
 def test_api_file_size_guard_exactly_limit(api_client):
     """Test API accepts files at exactly 50MB limit."""
-    # Create 49 MB file (under limit)
-    limit_file = BytesIO(b"x" * (49 * 1024 * 1024))
+    # Create file exactly at the 50 MB limit
+    limit_file = BytesIO(b"x" * (50 * 1024 * 1024))
     limit_file.name = "limit.pdf"
 
     response = api_client.post(
@@ -213,7 +213,7 @@ def test_api_file_size_guard_exactly_limit(api_client):
         files={"file": ("limit.pdf", limit_file, "application/pdf")},
         headers={"X-API-Key": "test-api-key"},
     )
-    # Should pass file size check, fail on PDF processing
+    # Should pass size check (request may still fail because content is not a valid PDF)
     assert (
         response.status_code != 413
         or "too large" not in response.json().get("detail", "").lower()
@@ -243,9 +243,9 @@ def test_api_config_race_condition(api_client):
     for t in threads:
         t.join()
 
-    # All requests should succeed (200 or 500 on error, not race condition)
+    # Requests may hit rate limiting, but server errors should not be accepted.
     assert len(results) == 10
-    assert all(status in [200, 500] for status in results)
+    assert all(status in [200, 429] for status in results)
 
 
 def test_pdf_processor_client_not_initialized():
