@@ -20,7 +20,7 @@ class LLMExtractor:
         self.client: Optional[OpenAI] = None
         if not self.mock:
             if config.openai_api_key:
-                self.client = OpenAI(api_key=config.openai_api_key)
+                self.client = OpenAI(api_key=config.openai_api_key, timeout=60.0)
 
     def parse_with_llm(self, text_grid: str) -> InvoiceData:
         """
@@ -118,6 +118,72 @@ Pay special attention to the column headers to correctly identify quantity vs pr
 
         Emphasizes column headers, math validation, and hallucination prevention.
         """
+        headers = self.config.column_headers
+
+        return f"""You are a precise invoice data extraction assistant specialized in processing invoices.
+
+INPUT FORMAT:
+You will receive a text representation of an invoice where table layout is preserved through spatial alignment (columns are visually aligned using spaces).
+
+EXTRACTION RULES:
+1. Extract these fields:
+   - Supplier name (e.g., "METRO CASH & CARRY MOLDOVA")
+   - Invoice number (e.g., "94")
+   - Date (format: DD-MM-YYYY)
+   - Total amount (final total value)
+   - Currency (MDL, EUR, USD, etc.)
+   - List of products with: code, name, quantity, unit_price, total_price
+
+2. CRITICAL - Column Identification:
+   - Look for column headers with these names:
+     * Quantity column: "{headers.quantity}"
+     * Unit price column: "{headers.unit_price}"
+     * Total price column: "{headers.total_price}"
+   - "{headers.quantity}" = Quantity (usually integers: 1, 2, 5, 10, 24)
+   - "{headers.unit_price}" = Unit Price (usually decimals with 2 places)
+   - "{headers.total_price}" = Total Price (rightmost column)
+   - Use VERTICAL ALIGNMENT under headers to identify which number belongs to which column
+
+3. MATH VALIDATION REQUIRED:
+   - For each product: quantity × unit_price ≈ total_price (allow ±5% for rounding/discounts)
+   - If math doesn't match, set confidence_score = 0.3 and flag it
+
+4. HALLUCINATION PREVENTION:
+   - Product codes: If you don't see a numeric code in leftmost column, return null for raw_code
+   - DO NOT generate/invent barcodes or EAN codes
+   - DO NOT infer product codes from product names
+   - If a product name is unclear, use text as-is (don't "clean it up")
+
+5. MULTI-PAGE HANDLING:
+   - You may receive multiple pages concatenated
+   - Look for page total markers
+   - Extract ALL products from ALL pages
+   - Use final total value (last page)
+
+6. DISCOUNT LINES:
+   - Lines with only numeric codes (e.g., "250075360  2,49-  20%  0,50-  2,99-") are discount details
+   - Skip these - don't treat as products
+
+OUTPUT FORMAT:
+Return a JSON object with this exact structure:
+{{
+  "supplier": "string or null",
+  "invoice_number": "string or null",
+  "date": "DD-MM-YYYY or null",
+  "total_amount": float,
+  "currency": "string (e.g., MDL, EUR)",
+  "products": [
+    {{
+      "raw_code": "string or null",
+      "name": "string",
+      "quantity": float,
+      "unit_price": float,
+      "total_price": float,
+      "confidence_score": float (0.0-1.0)
+    }}
+  ]
+}}
+"""
         return """You are a precise invoice data extraction assistant specialized in processing METRO Cash & Carry invoices.
 
 INPUT FORMAT:

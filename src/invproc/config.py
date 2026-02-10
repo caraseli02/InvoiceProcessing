@@ -3,11 +3,26 @@
 import logging
 from pathlib import Path
 from typing import Optional
-import pycountry
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+import pycountry
+
 logger = logging.getLogger(__name__)
+
+
+class ColumnHeadersConfig(BaseModel):
+    """Configurable column header names for invoice format detection."""
+
+    quantity: str = Field(default="Cant.", description="Quantity column header")
+    unit_price: str = Field(
+        default="Pret unitar", description="Unit price column header"
+    )
+    total_price: str = Field(
+        default="Valoare incl.TVA", description="Total price column header"
+    )
+
+    model_config = {"extra": "ignore"}
 
 
 class InvoiceConfig(BaseSettings):
@@ -73,6 +88,11 @@ class InvoiceConfig(BaseSettings):
     allowed_currencies: str = Field(
         default="EUR,USD,MDL,RUB,RON",
         description="Comma-separated list of allowed currency codes",
+    )
+
+    column_headers: ColumnHeadersConfig = Field(
+        default_factory=ColumnHeadersConfig,
+        description="Column header names for invoice format detection",
     )
 
     @field_validator("allowed_currencies")

@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 import uuid
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, cast
 
 from fastapi import (
     Depends,
@@ -29,6 +29,8 @@ from invproc.llm_extractor import LLMExtractor
 from invproc.pdf_processor import PDFProcessor
 from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
+
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
@@ -163,8 +165,25 @@ async def extract_invoice(
     temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{safe_name}"
 
     try:
+        # Check file size before loading into memory (prevents OOM)
+        content_length = request.headers.get("content-length")
+        if content_length:
+            content_length_int = int(content_length)
+            if content_length_int > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=f"File too large: {content_length_int:,} bytes (max {MAX_FILE_SIZE:,} = 50 MB)",
+                )
+
         # Offload blocking file read to thread pool
         content = await file.read()
+
+        # Double-check after read (in case Content-Length was missing or wrong)
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"File too large: {len(content):,} bytes (max {MAX_FILE_SIZE:,} = 50 MB)",
+            )
 
         # Offload blocking file write to thread pool
         await run_in_threadpool(temp_pdf_path.write_bytes, content)
@@ -182,7 +201,7 @@ async def extract_invoice(
             validator.validate_invoice, invoice_data
         )
 
-        return validated_invoice
+        return cast(InvoiceData, validated_invoice)
 
     except HTTPException:
         raise

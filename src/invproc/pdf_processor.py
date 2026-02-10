@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class PDFProcessor:
     """Process PDF files with native text extraction and OCR fallback."""
 
+    MAX_PAGES = 50
+
     def __init__(self, config: InvoiceConfig) -> None:
         self.config = config
 
@@ -43,6 +45,10 @@ class PDFProcessor:
                 full_text_grid = []
 
                 for i, page in enumerate(pdf.pages):
+                    if i >= self.MAX_PAGES:
+                        raise ValueError(
+                            f"PDF exceeds maximum page limit of {self.MAX_PAGES} pages"
+                        )
                     metadata["pages_processed"] += 1
 
                     words = page.extract_words(

@@ -41,6 +41,8 @@ app = typer.Typer(
 console = Console()
 logger = logging.getLogger(__name__)
 
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
 
 @app.command()
 def process(
@@ -99,6 +101,13 @@ def process(
     if lang:
         config.ocr_languages = lang
     config.validate_config()
+
+    file_size = input_file.stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        console.print(
+            f"\n[bold red]✗ Error:[/bold red] File too large: {file_size:,} bytes (max {MAX_FILE_SIZE:,} = 50 MB)"
+        )
+        raise typer.Exit(code=1)
 
     if verbose:
         console.print("[bold]Configuration:[/bold]")
