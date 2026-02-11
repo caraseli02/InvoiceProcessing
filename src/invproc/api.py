@@ -1,6 +1,8 @@
 """FastAPI application for invoice processing service."""
 
 import hashlib
+import json
+import logging
 import os
 from pathlib import Path
 import uuid
@@ -12,6 +14,7 @@ from fastapi import (
     File,
     HTTPException,
     Request,
+    Response,
     Security,
     UploadFile,
     status,
@@ -27,6 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from invproc.config import InvoiceConfig, get_config
+from invproc.extract_cache import InMemoryExtractCache
 from invproc.exceptions import ContractError
 from invproc.import_service import InvoiceImportService
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
@@ -40,6 +44,9 @@ from invproc.validator import InvoiceValidator
 from invproc.weight_parser import parse_weight_candidate
 
 UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
+logger = logging.getLogger(__name__)
+
+extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
 
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
@@ -112,10 +119,11 @@ def verify_api_key(
 
 def _save_upload_with_limit(
     source: BinaryIO, destination: Path, max_file_size: int
-) -> int:
+) -> tuple[int, str]:
     """Stream upload to disk while enforcing max file size."""
     source.seek(0)
     total_bytes = 0
+    digest = hashlib.sha256()
 
     with destination.open("wb") as output_file:
         while True:
@@ -134,8 +142,33 @@ def _save_upload_with_limit(
                 )
 
             output_file.write(chunk)
+            digest.update(chunk)
 
-    return total_bytes
+    return total_bytes, digest.hexdigest()
+
+
+def _build_extract_cache_signature(config: InvoiceConfig) -> str:
+    """Build a stable signature for extraction-affecting config fields."""
+    payload = {
+        "schema_version": 1,
+        "model": config.model,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "scale_factor": config.scale_factor,
+        "tolerance": config.tolerance,
+        "ocr_dpi": config.ocr_dpi,
+        "ocr_languages": config.ocr_languages,
+        "ocr_config": config.ocr_config,
+        "column_headers": config.column_headers.model_dump(mode="json"),
+        "mock": config.mock,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _build_extract_cache_key(config: InvoiceConfig, file_hash: str) -> str:
+    """Build extract cache key for file bytes + effective extraction config."""
+    return f"{file_hash}:{_build_extract_cache_signature(config)}"
 
 
 # Initialize app and rate limiter
@@ -192,6 +225,7 @@ async def health_check() -> Dict[str, Any]:
 @limiter.limit("10/minute")
 async def extract_invoice(
     request: Request,
+    response: Response,
     file: UploadFile = File(..., description="Invoice PDF file"),
     api_key: str = Depends(verify_api_key),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
@@ -215,9 +249,23 @@ async def extract_invoice(
         max_file_size = config.max_pdf_size_mb * 1024 * 1024
 
         # Stream upload to disk and enforce size limit by actual file bytes.
-        await run_in_threadpool(
+        _, file_hash = await run_in_threadpool(
             _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
+
+        if config.extract_cache_enabled:
+            extract_cache.configure(
+                ttl_sec=config.extract_cache_ttl_sec,
+                max_entries=config.extract_cache_max_entries,
+            )
+            cache_key = _build_extract_cache_key(config, file_hash)
+            cached_payload = extract_cache.get(cache_key)
+            if cached_payload is not None:
+                response.headers["X-Extract-Cache"] = "hit"
+                logger.info("extract cache hit: file_hash=%s", file_hash[:12])
+                return InvoiceData(**cached_payload)
+            response.headers["X-Extract-Cache"] = "miss"
+            logger.info("extract cache miss: file_hash=%s", file_hash[:12])
 
         text_grid, _metadata = await run_in_threadpool(
             pdf_processor.extract_content, temp_pdf_path
@@ -227,6 +275,10 @@ async def extract_invoice(
             validator.validate_invoice, invoice_data
         )
         _add_row_metadata(validated_invoice)
+
+        if config.extract_cache_enabled:
+            cache_key = _build_extract_cache_key(config, file_hash)
+            extract_cache.set(cache_key, validated_invoice.model_dump(mode="json"))
 
         return cast(InvoiceData, validated_invoice)
 
@@ -245,9 +297,7 @@ async def extract_invoice(
             detail="Model request timed out. Please retry.",
         )
     except Exception as e:
-        import logging
-
-        logging.exception("PDF processing failed: %s", str(e))
+        logger.exception("PDF processing failed: %s", str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Processing failed: {str(e)}",
