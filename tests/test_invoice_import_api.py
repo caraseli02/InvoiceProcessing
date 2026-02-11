@@ -14,11 +14,13 @@ def setup_test_config() -> None:
     os.environ["API_KEYS"] = "test-api-key"
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
     os.environ["MOCK"] = "true"
+    os.environ["DEV_BYPASS_API_KEY"] = "false"
     reload_config()
     yield
     os.environ.pop("API_KEYS", None)
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
+    os.environ.pop("DEV_BYPASS_API_KEY", None)
     reload_config()
 
 
