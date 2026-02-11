@@ -13,7 +13,11 @@ class Product(BaseModel):
     name: str = Field(..., description="Product name")
     quantity: float = Field(..., gt=0, description="Quantity must be positive")
     unit_price: float = Field(..., gt=0, description="Unit price must be positive")
-    total_price: float = Field(..., ge=0, description="Total line price")
+    total_price: float = Field(
+        ...,
+        ge=0,
+        description="Total line price including VAT (Valoare incl.TVA)",
+    )
     confidence_score: float = Field(..., ge=0, le=1, description="Confidence 0-1")
     row_id: Optional[str] = Field(None, description="Stable row identifier for this extraction")
     weight_kg_candidate: Optional[float] = Field(
