@@ -152,6 +152,11 @@ api_key = secrets.token_urlsafe(32)
 print(api_key)
 ```
 
+### Troubleshooting
+
+- For invoice MVP integration issues (auth mismatch, parser edge cases, API scope alignment), see:
+  - `docs/solutions/integration-issues/invoice-mvp-auth-and-parser-alignment-20260211.md`
+
 ## Testing
 
 ```bash

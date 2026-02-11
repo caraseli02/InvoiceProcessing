@@ -68,6 +68,12 @@ The `.env` file is gitignored. All output (grids, OCR debug images, JSON results
 
 The pipeline is: **PDF → Text Grid → LLM → Validation → JSON output**.
 
+### Backend ownership rule (permanent)
+
+This repository is the backend for the React app. There is no separate app backend.
+
+Treat this service as the source of truth for backend behavior, contracts, and business logic.
+
 All config lives in a single `InvoiceConfig` (Pydantic Settings) singleton accessed via `get_config()` in `config.py`. CLI flags mutate this singleton before passing it downstream — there is no separate config-passing mechanism.
 
 ### Module responsibilities
