@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from invproc.config import InvoiceConfig
 from invproc.exceptions import ContractError
@@ -37,7 +37,7 @@ class MatchResolution:
     """Result of product match lookup."""
 
     product: Optional[ProductRecord]
-    strategy: Optional[str]
+    strategy: Optional[Literal["barcode", "normalized_name"]]
     error_code: Optional[str]
 
 
@@ -272,8 +272,10 @@ class InvoiceImportService:
 
             if match.product is None:
                 product = self.repository.create_product(upsert_data)
-                action = "created"
-                match_strategy = "created"
+                action: Literal["created", "updated"] = "created"
+                match_strategy: Literal["barcode", "normalized_name", "created"] = (
+                    "created"
+                )
                 created_count += 1
             else:
                 product = self.repository.update_product(match.product.product_id, upsert_data)
@@ -303,7 +305,7 @@ class InvoiceImportService:
                 )
             )
 
-        import_status = "completed"
+        import_status: Literal["completed", "partial_failed", "failed"] = "completed"
         if error_count == len(rows):
             import_status = "failed"
         elif error_count > 0:
