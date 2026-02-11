@@ -48,9 +48,14 @@ def test_api_keys_from_env():
 
 def test_config_singleton():
     """Test that get_config returns singleton instance."""
-    config1 = get_config()
-    config2 = get_config()
-    assert config1 is config2
+    os.environ["MOCK"] = "true"
+    try:
+        config1 = get_config()
+        config2 = get_config()
+        assert config1 is config2
+    finally:
+        del os.environ["MOCK"]
+        reload_config()
 
 
 def test_reload_config():
@@ -103,3 +108,25 @@ def test_validate_config_valid():
     )
     config.validate_config()  # Should not raise
 
+
+def test_extract_cache_defaults(monkeypatch):
+    """Test extraction cache defaults."""
+    monkeypatch.delenv("EXTRACT_CACHE_ENABLED", raising=False)
+    monkeypatch.delenv("EXTRACT_CACHE_TTL_SEC", raising=False)
+    monkeypatch.delenv("EXTRACT_CACHE_MAX_ENTRIES", raising=False)
+    config = InvoiceConfig(mock=True, _env_file=None)
+    assert config.extract_cache_enabled is False
+    assert config.extract_cache_ttl_sec == 86400
+    assert config.extract_cache_max_entries == 256
+
+
+def test_extract_cache_ttl_validation():
+    """Test extraction cache TTL validation."""
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        InvoiceConfig(mock=True, extract_cache_ttl_sec=0)
+
+
+def test_extract_cache_max_entries_validation():
+    """Test extraction cache max entries validation."""
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        InvoiceConfig(mock=True, extract_cache_max_entries=0)

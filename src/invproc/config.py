@@ -182,6 +182,25 @@ class InvoiceConfig(BaseSettings):
         description="Transport surcharge in EUR per kilogram",
     )
 
+    extract_cache_enabled: bool = Field(
+        default=False,
+        description="Enable in-memory extraction cache for repeated identical PDFs",
+    )
+
+    extract_cache_ttl_sec: int = Field(
+        default=86400,
+        ge=1,
+        le=604800,
+        description="Extraction cache TTL in seconds",
+    )
+
+    extract_cache_max_entries: int = Field(
+        default=256,
+        ge=1,
+        le=10000,
+        description="Maximum number of cached extraction entries",
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -239,6 +258,12 @@ class InvoiceConfig(BaseSettings):
 
         if self.openai_timeout_sec < 10 or self.openai_timeout_sec > 600:
             errors.append("OPENAI_TIMEOUT_SEC must be between 10 and 600")
+
+        if self.extract_cache_ttl_sec < 1:
+            errors.append("EXTRACT_CACHE_TTL_SEC must be >= 1")
+
+        if self.extract_cache_max_entries < 1:
+            errors.append("EXTRACT_CACHE_MAX_ENTRIES must be >= 1")
 
         # Raise error if any validation failed
         if errors:

@@ -6,9 +6,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from invproc.api import app, limiter
+from invproc.api import app, extract_cache, limiter
 from invproc.config import reload_config
-from invproc.llm_extractor import LLMOutputIntegrityError
+from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,11 @@ def setup_test_config():
     os.environ["MOCK"] = "true"
     os.environ["DEV_BYPASS_API_KEY"] = "false"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
+    os.environ["EXTRACT_CACHE_ENABLED"] = "false"
+    os.environ["EXTRACT_CACHE_TTL_SEC"] = "3600"
+    os.environ["EXTRACT_CACHE_MAX_ENTRIES"] = "64"
     limiter.reset()
+    extract_cache.reset()
     reload_config()
     yield
     os.environ.pop("API_KEYS", None)
@@ -27,7 +31,12 @@ def setup_test_config():
     os.environ.pop("MOCK", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
     os.environ.pop("DEV_BYPASS_API_KEY", None)
+    os.environ.pop("MODEL", None)
+    os.environ.pop("EXTRACT_CACHE_ENABLED", None)
+    os.environ.pop("EXTRACT_CACHE_TTL_SEC", None)
+    os.environ.pop("EXTRACT_CACHE_MAX_ENTRIES", None)
     limiter.reset()
+    extract_cache.reset()
     reload_config()
 
 
@@ -190,3 +199,106 @@ def test_health_check_structure(client):
     assert data["status"] == "healthy"
     assert "service" in data
     assert "version" in data
+
+
+def test_extract_cache_hit_skips_second_llm_call(client):
+    """Test identical file upload is served from cache on second request."""
+    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
+    reload_config()
+
+    call_count = 0
+    original_parse = LLMExtractor.parse_with_llm
+
+    def counting_parse(self, text_grid):
+        nonlocal call_count
+        call_count += 1
+        return original_parse(self, text_grid)
+
+    with patch.object(LLMExtractor, "parse_with_llm", new=counting_parse):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            first = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            second = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.headers.get("X-Extract-Cache") == "miss"
+    assert second.headers.get("X-Extract-Cache") == "hit"
+    assert first.json() == second.json()
+    assert call_count == 1
+
+
+def test_extract_cache_config_change_forces_miss(client):
+    """Test config signature changes invalidate cached entry."""
+    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
+    reload_config()
+
+    call_count = 0
+    original_parse = LLMExtractor.parse_with_llm
+
+    def counting_parse(self, text_grid):
+        nonlocal call_count
+        call_count += 1
+        return original_parse(self, text_grid)
+
+    with patch.object(LLMExtractor, "parse_with_llm", new=counting_parse):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            first = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+        assert first.status_code == 200
+        assert call_count == 1
+
+        os.environ["MODEL"] = "gpt-4o"
+        reload_config()
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            second = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+
+    assert second.status_code == 200
+    assert second.headers.get("X-Extract-Cache") == "miss"
+    assert call_count == 2
+
+
+def test_extract_does_not_cache_422_errors(client):
+    """Test malformed LLM output errors are not cached."""
+    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
+    reload_config()
+
+    call_count = 0
+
+    def always_fail(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise LLMOutputIntegrityError("LLM returned malformed rows")
+
+    with patch("invproc.llm_extractor.LLMExtractor.parse_with_llm", side_effect=always_fail):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            first = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            second = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"X-API-Key": "test-api-key"},
+            )
+
+    assert first.status_code == 422
+    assert second.status_code == 422
+    assert call_count == 2
