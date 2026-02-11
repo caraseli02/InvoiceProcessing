@@ -94,3 +94,35 @@ def test_validator_currency_case_insensitive():
     )
     validated3 = validator.validate_invoice(data3)
     assert validated3.currency == "EUR"
+
+
+def test_validator_accepts_vat_inclusive_total_price() -> None:
+    """Quantity * unit may be ex-VAT while total_price can be VAT-inclusive."""
+    validator = InvoiceValidator(InvoiceConfig(allowed_currencies="EUR,MDL"))
+    product = Product(
+        raw_code=None,
+        name="50G CEAI CATINA GHIMBIR RIOBA",
+        quantity=24.0,
+        unit_price=6.58,
+        total_price=189.6,  # ~= 24 * 6.58 * 1.20
+        confidence_score=1.0,
+    )
+
+    score = validator._score_product(product)
+    assert score > 0.9
+
+
+def test_validator_still_penalizes_large_mismatch() -> None:
+    """Large math mismatch should still reduce confidence substantially."""
+    validator = InvoiceValidator(InvoiceConfig(allowed_currencies="EUR,MDL"))
+    product = Product(
+        raw_code="123",
+        name="Mismatch product",
+        quantity=10.0,
+        unit_price=10.0,
+        total_price=220.0,
+        confidence_score=1.0,
+    )
+
+    score = validator._score_product(product)
+    assert score < 0.5

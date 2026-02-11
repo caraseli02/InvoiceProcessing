@@ -96,8 +96,15 @@ class InvoiceValidator:
         if calculated_total == 0:
             return False, 100.0
 
-        discrepancy = abs(calculated_total - product.total_price)
-        discrepancy_pct = (discrepancy / calculated_total) * 100
+        # In many invoices, total_price is VAT-inclusive while unit_price is ex-VAT.
+        # Accept either ex-VAT or common VAT-inclusive totals (8% / 20%).
+        candidate_totals = (
+            calculated_total,
+            calculated_total * 1.08,
+            calculated_total * 1.20,
+        )
+        best_discrepancy = min(abs(candidate - product.total_price) for candidate in candidate_totals)
+        discrepancy_pct = (best_discrepancy / calculated_total) * 100
 
         is_valid = discrepancy_pct <= 5.0
         return is_valid, discrepancy_pct

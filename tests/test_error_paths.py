@@ -192,7 +192,7 @@ def test_null_api_response_content(llm_extractor):
 
 
 def test_llm_filters_malformed_product_rows(llm_extractor):
-    """Test malformed rows with null numeric fields raise integrity error."""
+    """Test malformed rows are dropped when at least one valid row remains."""
     llm_extractor.mock = False
 
     payload = {
@@ -210,6 +210,80 @@ def test_llm_filters_malformed_product_rows(llm_extractor):
                 "total_price": 20,
                 "confidence_score": 0.9,
             },
+            {
+                "raw_code": "999",
+                "name": "Broken Product",
+                "quantity": None,
+                "unit_price": None,
+                "total_price": 0,
+                "confidence_score": 0.1,
+            },
+        ],
+    }
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content=json.dumps(payload)))]
+
+    llm_extractor.client = Mock()
+    llm_extractor.client.chat.completions.create.return_value = mock_response
+
+    parsed = llm_extractor.parse_with_llm("test grid")
+    assert len(parsed.products) == 1
+    assert parsed.products[0].name == "Valid Product"
+
+
+def test_llm_filters_zero_quantity_and_unit_price_rows(llm_extractor):
+    """Rows with non-positive quantity/unit price should be dropped."""
+    llm_extractor.mock = False
+
+    payload = {
+        "supplier": "Test Supplier",
+        "invoice_number": "INV-1",
+        "date": "10-02-2026",
+        "total_amount": 100.0,
+        "currency": "MDL",
+        "products": [
+            {
+                "raw_code": "123",
+                "name": "Valid Product",
+                "quantity": 2,
+                "unit_price": 10,
+                "total_price": 20,
+                "confidence_score": 0.9,
+            },
+            {
+                "raw_code": "999",
+                "name": "Broken Zero Product",
+                "quantity": 0.0,
+                "unit_price": 0.0,
+                "total_price": 0.0,
+                "confidence_score": 0.1,
+            },
+        ],
+    }
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content=json.dumps(payload)))]
+
+    llm_extractor.client = Mock()
+    llm_extractor.client.chat.completions.create.return_value = mock_response
+
+    parsed = llm_extractor.parse_with_llm("test grid")
+    assert len(parsed.products) == 1
+    assert parsed.products[0].name == "Valid Product"
+
+
+def test_llm_raises_if_all_rows_malformed(llm_extractor):
+    """Test extractor raises integrity error when no valid products remain."""
+    llm_extractor.mock = False
+
+    payload = {
+        "supplier": "Test Supplier",
+        "invoice_number": "INV-1",
+        "date": "10-02-2026",
+        "total_amount": 100.0,
+        "currency": "MDL",
+        "products": [
             {
                 "raw_code": "999",
                 "name": "Broken Product",

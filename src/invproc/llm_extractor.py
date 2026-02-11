@@ -115,7 +115,16 @@ Pay special attention to the column headers to correctly identify quantity vs pr
             name = name_raw.strip() if isinstance(name_raw, str) else ""
 
             # Skip malformed product rows instead of failing entire invoice.
-            if not name or quantity is None or unit_price is None or total_price is None:
+            # Quantity and unit price must be strictly positive for valid products.
+            if (
+                not name
+                or quantity is None
+                or unit_price is None
+                or total_price is None
+                or quantity <= 0
+                or unit_price <= 0
+                or total_price < 0
+            ):
                 dropped_products += 1
                 continue
 
@@ -144,9 +153,11 @@ Pay special attention to the column headers to correctly identify quantity vs pr
             logger.warning(
                 "Dropped %s malformed product rows from LLM output", dropped_products
             )
-            raise LLMOutputIntegrityError(
-                f"LLM returned {dropped_products} malformed product rows"
-            )
+            # Keep extraction usable if at least one row is valid.
+            if not cleaned_products:
+                raise LLMOutputIntegrityError(
+                    f"LLM returned {dropped_products} malformed product rows"
+                )
 
         normalized = dict(payload)
         normalized["products"] = cleaned_products
@@ -253,9 +264,12 @@ EXTRACTION RULES:
    - "{headers.total_price}" = Total Price (rightmost column)
    - Use VERTICAL ALIGNMENT under headers to identify which number belongs to which column
 
-3. MATH VALIDATION REQUIRED:
-   - For each product: quantity × unit_price ≈ total_price (allow ±5% for rounding/discounts)
-   - If math doesn't match, set confidence_score = 0.3 and flag it
+3. COLUMN SEMANTICS (VAT-aware):
+   - `quantity` MUST come from "{headers.quantity}" (e.g., "Cant.")
+   - `unit_price` MUST come from "{headers.unit_price}" (e.g., "Pret unitar")
+   - `total_price` MUST come from "{headers.total_price}" (e.g., "Valoare incl.TVA")
+   - IMPORTANT: In many invoices, `quantity × unit_price` matches "Valoare fara TVA", NOT "Valoare incl.TVA"
+   - Never alter quantity or total_price just to make math match.
 
 4. HALLUCINATION PREVENTION:
    - Product codes: If you don't see a numeric code in leftmost column, return null for raw_code
@@ -269,7 +283,12 @@ EXTRACTION RULES:
    - Extract ALL products from ALL pages
    - Use final total value (last page)
 
-6. DISCOUNT LINES:
+6. MULTIPLE INTEGER COLUMNS:
+   - Some invoices contain nearby integer columns (for example "Unit", "Mod", and "Cant.")
+   - Only map quantity from "{headers.quantity}".
+   - Do not map quantity from "Unit" or "Mod".
+
+7. DISCOUNT LINES:
    - Lines with only numeric codes (e.g., "250075360  2,49-  20%  0,50-  2,99-") are discount details
    - Skip these - don't treat as products
 
