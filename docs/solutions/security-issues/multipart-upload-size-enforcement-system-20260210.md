@@ -91,3 +91,4 @@ await run_in_threadpool(_save_upload_with_limit, file.file, temp_pdf_path, MAX_F
 ## Related Issues
 - See also: [no-rate-limiting-dos-attacks.md](./no-rate-limiting-dos-attacks.md)
 - Related performance hardening: [blocking-io-async-prevents-concurrency.md](../performance-issues/blocking-io-async-prevents-concurrency.md)
+- Related runtime hardening: [llm-malformed-product-rows-500-and-test-limiter-flakes-20260210.md](../runtime-errors/llm-malformed-product-rows-500-and-test-limiter-flakes-20260210.md)

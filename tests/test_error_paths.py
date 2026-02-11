@@ -9,7 +9,7 @@ from io import BytesIO
 
 from fastapi.testclient import TestClient
 
-from invproc.api import app
+from invproc.api import app, limiter
 from invproc.pdf_processor import PDFProcessor
 from invproc.llm_extractor import LLMExtractor
 from invproc.config import get_config, reload_config
@@ -22,10 +22,14 @@ def setup_test_config():
     """Setup test configuration."""
     os.environ["MOCK"] = "true"
     os.environ["API_KEYS"] = "test-api-key"
+    os.environ["MAX_PDF_SIZE_MB"] = "2"
+    limiter.reset()
     reload_config()
     yield
     os.environ.pop("MOCK", None)
     os.environ.pop("API_KEYS", None)
+    os.environ.pop("MAX_PDF_SIZE_MB", None)
+    limiter.reset()
     reload_config()
 
 
@@ -187,10 +191,50 @@ def test_null_api_response_content(llm_extractor):
             llm_extractor.parse_with_llm("test grid")
 
 
+def test_llm_filters_malformed_product_rows(llm_extractor):
+    """Test malformed rows with null numeric fields raise integrity error."""
+    llm_extractor.mock = False
+
+    payload = {
+        "supplier": "Test Supplier",
+        "invoice_number": "INV-1",
+        "date": "10-02-2026",
+        "total_amount": 100.0,
+        "currency": "MDL",
+        "products": [
+            {
+                "raw_code": "123",
+                "name": "Valid Product",
+                "quantity": 2,
+                "unit_price": 10,
+                "total_price": 20,
+                "confidence_score": 0.9,
+            },
+            {
+                "raw_code": "999",
+                "name": "Broken Product",
+                "quantity": None,
+                "unit_price": None,
+                "total_price": 0,
+                "confidence_score": 0.1,
+            },
+        ],
+    }
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content=json.dumps(payload)))]
+
+    llm_extractor.client = Mock()
+    llm_extractor.client.chat.completions.create.return_value = mock_response
+
+    with pytest.raises(ValueError, match="malformed product rows"):
+        llm_extractor.parse_with_llm("test grid")
+
+
 def test_api_file_size_guard_large_file(api_client):
-    """Test API rejects files larger than 50MB limit."""
-    # Create 51 MB file (exceeds 50 MB limit)
-    large_file = BytesIO(b"x" * (51 * 1024 * 1024))
+    """Test API rejects files larger than configured 2MB limit."""
+    # Create 3 MB file (exceeds 2 MB limit)
+    large_file = BytesIO(b"x" * (3 * 1024 * 1024))
     large_file.name = "large.pdf"
 
     response = api_client.post(
@@ -203,9 +247,9 @@ def test_api_file_size_guard_large_file(api_client):
 
 
 def test_api_file_size_guard_exactly_limit(api_client):
-    """Test API accepts files at exactly 50MB limit."""
-    # Create file exactly at the 50 MB limit
-    limit_file = BytesIO(b"x" * (50 * 1024 * 1024))
+    """Test API accepts files at exactly configured 2MB limit."""
+    # Create file exactly at the 2 MB limit
+    limit_file = BytesIO(b"x" * (2 * 1024 * 1024))
     limit_file.name = "limit.pdf"
 
     response = api_client.post(

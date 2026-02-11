@@ -41,7 +41,8 @@ git push origin main
 | `ALLOWED_ORIGINS` | `https://yourdomain.com` | No |
 | `SCALE_FACTOR` | `0.2` | No |
 | `TOLERANCE` | `3` | No |
-| `OCR_DPI` | `300` | No |
+| `OCR_DPI` | `150` | No |
+| `MAX_PDF_SIZE_MB` | `2` | No |
 | `OCR_LANGUAGES` | `ron+eng+rus` | No |
 | `LLM_MODEL` | `gpt-4o-mini` | No |
 | `LLM_TEMPERATURE` | `0` | No |
@@ -132,6 +133,7 @@ If you need always-on or faster processing:
 
 **Optimizations:**
 - Resize large PDFs before upload
+- Keep uploads at or below `MAX_PDF_SIZE_MB` (default 2 MB)
 - Use `--mock` mode for testing (add `MOCK=true` env var)
 - Upgrade to paid plan for more CPU/RAM
 
@@ -146,7 +148,8 @@ API_KEYS=key-1,key-2,key-3
 ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
 SCALE_FACTOR=0.2
 TOLERANCE=3
-OCR_DPI=300
+OCR_DPI=150
+MAX_PDF_SIZE_MB=2
 OCR_LANGUAGES=ron+eng+rus
 LLM_MODEL=gpt-4o-mini
 LLM_TEMPERATURE=0

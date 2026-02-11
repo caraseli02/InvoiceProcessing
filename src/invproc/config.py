@@ -54,6 +54,13 @@ class InvoiceConfig(BaseSettings):
         description="Maximum tokens for API responses",
     )
 
+    openai_timeout_sec: float = Field(
+        default=180.0,
+        ge=10.0,
+        le=600.0,
+        description="OpenAI API request timeout in seconds",
+    )
+
     scale_factor: float = Field(
         default=0.2,
         ge=0.1,
@@ -69,10 +76,17 @@ class InvoiceConfig(BaseSettings):
     )
 
     ocr_dpi: int = Field(
-        default=300,
+        default=150,
         ge=150,
         le=600,
         description="OCR resolution in DPI",
+    )
+
+    max_pdf_size_mb: int = Field(
+        default=2,
+        ge=1,
+        le=50,
+        description="Maximum PDF upload size in megabytes for API extraction",
     )
 
     ocr_languages: str = Field(
@@ -151,6 +165,11 @@ class InvoiceConfig(BaseSettings):
         description="Comma-separated API keys for authentication",
     )
 
+    dev_bypass_api_key: bool = Field(
+        default=False,
+        description="Bypass API key verification for local development only",
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -202,6 +221,12 @@ class InvoiceConfig(BaseSettings):
 
         if self.ocr_dpi < 72 or self.ocr_dpi > 600:
             errors.append("OCR_DPI must be between 72 and 600")
+
+        if self.max_pdf_size_mb < 1 or self.max_pdf_size_mb > 50:
+            errors.append("MAX_PDF_SIZE_MB must be between 1 and 50")
+
+        if self.openai_timeout_sec < 10 or self.openai_timeout_sec > 600:
+            errors.append("OPENAI_TIMEOUT_SEC must be between 10 and 600")
 
         # Raise error if any validation failed
         if errors:
