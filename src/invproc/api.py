@@ -1,5 +1,6 @@
 """FastAPI application for invoice processing service."""
 
+import hashlib
 import os
 from pathlib import Path
 import uuid
@@ -18,18 +19,25 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from openai import APITimeoutError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from openai import APITimeoutError
 
 from invproc.config import InvoiceConfig, get_config
+from invproc.exceptions import ContractError
+from invproc.import_service import InvoiceImportService
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
+from invproc.models import (
+    InvoiceData,
+    InvoicePreviewPricingRequest,
+    InvoicePreviewPricingResponse,
+)
 from invproc.pdf_processor import PDFProcessor
-from invproc.models import InvoiceData
 from invproc.validator import InvoiceValidator
+from invproc.weight_parser import parse_weight_candidate
 
 UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
@@ -47,6 +55,13 @@ def get_llm_extractor(config: InvoiceConfig = Depends(get_config)) -> LLMExtract
 def get_validator(config: InvoiceConfig = Depends(get_config)) -> InvoiceValidator:
     """Get validator instance (per-request)."""
     return InvoiceValidator(config)
+
+
+def get_import_service(
+    config: InvoiceConfig = Depends(get_config),
+) -> InvoiceImportService:
+    """Get invoice preview service instance."""
+    return InvoiceImportService(config=config)
 
 
 def get_allowed_origins() -> list[str]:
@@ -68,23 +83,31 @@ def get_api_keys(config: InvoiceConfig = Depends(get_config)) -> Set[str]:
 
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def verify_api_key(
     api_key: Optional[str] = Security(api_key_header),
+    bearer_credentials: Optional[HTTPAuthorizationCredentials] = Security(
+        bearer_scheme
+    ),
     valid_keys: Set[str] = Depends(get_api_keys),
     config: InvoiceConfig = Depends(get_config),
 ) -> str:
-    """Verify API key against allowed keys."""
+    """Verify API key from X-API-Key or Authorization Bearer token."""
     if config.dev_bypass_api_key:
         return "dev-bypass"
 
-    if not api_key or api_key not in valid_keys:
+    candidate = api_key
+    if not candidate and bearer_credentials:
+        candidate = bearer_credentials.credentials
+
+    if not candidate or candidate not in valid_keys:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",
         )
-    return api_key
+    return candidate
 
 
 def _save_upload_with_limit(
@@ -175,22 +198,7 @@ async def extract_invoice(
     llm_extractor: LLMExtractor = Depends(get_llm_extractor),
     validator: InvoiceValidator = Depends(get_validator),
 ) -> InvoiceData:
-    """
-    Extract structured data from uploaded invoice PDF.
-
-    **Authentication:**
-    - API key required in `X-API-Key` header
-
-    **Returns:**
-    - InvoiceData: Structured invoice data with products and metadata
-
-    **Example:**
-    ```bash
-    curl -X POST "http://localhost:8000/extract" \\
-      -H "X-API-Key: your-api-key" \\
-      -F "file=@invoice.pdf"
-    ```
-    """
+    """Extract structured data from uploaded invoice PDF."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -211,22 +219,20 @@ async def extract_invoice(
             _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
-        # Offload CPU-intensive PDF processing to thread pool
-        text_grid, metadata = await run_in_threadpool(
+        text_grid, _metadata = await run_in_threadpool(
             pdf_processor.extract_content, temp_pdf_path
         )
-
-        # Offload blocking LLM call to thread pool
         invoice_data = await run_in_threadpool(llm_extractor.parse_with_llm, text_grid)
-
-        # Offload CPU-intensive validation to thread pool
         validated_invoice = await run_in_threadpool(
             validator.validate_invoice, invoice_data
         )
+        _add_row_metadata(validated_invoice)
 
         return cast(InvoiceData, validated_invoice)
 
     except HTTPException:
+        raise
+    except ContractError:
         raise
     except LLMOutputIntegrityError as e:
         raise HTTPException(
@@ -247,9 +253,45 @@ async def extract_invoice(
             detail=f"Processing failed: {str(e)}",
         )
     finally:
-        # Offload blocking file delete to thread pool
         if temp_pdf_path.exists():
             await run_in_threadpool(temp_pdf_path.unlink)
+
+
+@app.post(
+    "/invoice/preview-pricing",
+    response_model=InvoicePreviewPricingResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        401: {"description": "Invalid API key"},
+        400: {"description": "Invalid payload"},
+        429: {"description": "Rate limit exceeded"},
+    },
+)
+@limiter.limit("20/minute")
+async def preview_invoice_pricing(
+    request: Request,
+    payload: InvoicePreviewPricingRequest,
+    api_key: str = Depends(verify_api_key),
+    import_service: InvoiceImportService = Depends(get_import_service),
+) -> InvoicePreviewPricingResponse:
+    """Compute canonical pricing preview for invoice rows."""
+    return await run_in_threadpool(import_service.preview_pricing, payload)
+
+
+def _add_row_metadata(invoice_data: InvoiceData) -> None:
+    """Populate extracted rows with stable IDs and weight candidates."""
+    for idx, product in enumerate(invoice_data.products):
+        raw = (
+            f"{idx}|{product.raw_code or ''}|{product.name}|"
+            f"{product.quantity}|{product.total_price}"
+        )
+        row_hash = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+        product.row_id = f"r_{row_hash}"
+
+        parsed = parse_weight_candidate(product.name)
+        product.weight_kg_candidate = parsed.weight_kg
+        product.size_token = parsed.size_token
+        product.parse_confidence = parsed.parse_confidence
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -260,6 +302,21 @@ async def rate_limit_exceeded_handler(
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please try again later."},
+    )
+
+
+@app.exception_handler(ContractError)
+async def contract_error_handler(request: Request, exc: ContractError) -> JSONResponse:
+    """Map domain contract errors to stable API error payload."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+            }
+        },
     )
 
 

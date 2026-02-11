@@ -78,6 +78,30 @@ def test_extract_with_valid_auth(client):
     assert "supplier" in data
     assert "products" in data
     assert len(data["products"]) > 0
+    assert "row_id" in data["products"][0]
+    assert "weight_kg_candidate" in data["products"][0]
+
+
+def test_extract_with_valid_bearer_auth(client):
+    """Test extraction with valid bearer token."""
+    with open("test_invoices/invoice-test.pdf", "rb") as f:
+        response = client.post(
+            "/extract",
+            files={"file": ("test.pdf", f, "application/pdf")},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+    assert response.status_code == 200
+
+
+def test_extract_with_invalid_bearer_auth(client):
+    """Test extraction with invalid bearer token."""
+    with open("test_invoices/invoice-test.pdf", "rb") as f:
+        response = client.post(
+            "/extract",
+            files={"file": ("test.pdf", f, "application/pdf")},
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+    assert response.status_code == 401
 
 
 def test_extract_invalid_file_type(client):

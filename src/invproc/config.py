@@ -170,6 +170,18 @@ class InvoiceConfig(BaseSettings):
         description="Bypass API key verification for local development only",
     )
 
+    fx_lei_to_eur: float = Field(
+        default=19.5,
+        gt=0,
+        description="Fixed FX rate used for invoice pricing parity",
+    )
+
+    transport_rate_per_kg: float = Field(
+        default=1.5,
+        gt=0,
+        description="Transport surcharge in EUR per kilogram",
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)

@@ -201,6 +201,10 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                     unit_price=43.43,
                     total_price=217.15,
                     confidence_score=0.95,
+                    row_id=None,
+                    weight_kg_candidate=None,
+                    size_token=None,
+                    parse_confidence=None,
                 ),
                 Product(
                     raw_code="4840167002500",
@@ -209,6 +213,10 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                     unit_price=41.58,
                     total_price=166.32,
                     confidence_score=0.95,
+                    row_id=None,
+                    weight_kg_candidate=None,
+                    size_token=None,
+                    parse_confidence=None,
                 ),
             ],
         )
