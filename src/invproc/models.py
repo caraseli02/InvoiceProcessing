@@ -11,6 +11,20 @@ class Product(BaseModel):
 
     raw_code: Optional[str] = Field(None, description="Product code/EAN if visible")
     name: str = Field(..., description="Product name")
+    category_suggestion: Optional[
+        Literal[
+            "General",
+            "Produce",
+            "Dairy",
+            "Meat",
+            "Pantry",
+            "Snacks",
+            "Beverages",
+            "Household",
+            "Conserve",
+            "Cereale",
+        ]
+    ] = Field(None, description="Best-effort category suggestion (enum) or null")
     quantity: float = Field(..., gt=0, description="Quantity must be positive")
     unit_price: float = Field(..., gt=0, description="Unit price must be positive")
     total_price: float = Field(
@@ -19,13 +33,17 @@ class Product(BaseModel):
         description="Total line price including VAT (Valoare incl.TVA)",
     )
     confidence_score: float = Field(..., ge=0, le=1, description="Confidence 0-1")
-    row_id: Optional[str] = Field(None, description="Stable row identifier for this extraction")
+    row_id: Optional[str] = Field(
+        None, description="Stable row identifier for this extraction"
+    )
     weight_kg_candidate: Optional[float] = Field(
         None,
         gt=0,
         description="Best-effort parsed weight in kilograms",
     )
-    size_token: Optional[str] = Field(None, description="Matched size token from product name")
+    size_token: Optional[str] = Field(
+        None, description="Matched size token from product name"
+    )
     parse_confidence: Optional[float] = Field(
         None,
         ge=0,

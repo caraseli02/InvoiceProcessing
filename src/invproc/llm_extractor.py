@@ -10,6 +10,20 @@ from .models import InvoiceData, Product
 
 logger = logging.getLogger(__name__)
 
+_CATEGORY_ENUM: tuple[str, ...] = (
+    "General",
+    "Produce",
+    "Dairy",
+    "Meat",
+    "Pantry",
+    "Snacks",
+    "Beverages",
+    "Household",
+    "Conserve",
+    "Cereale",
+)
+_CATEGORY_SET = set(_CATEGORY_ENUM)
+
 
 class LLMOutputIntegrityError(ValueError):
     """Raised when LLM output is structurally incomplete for safe extraction."""
@@ -138,10 +152,19 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 code_text = str(raw_code).strip()
                 normalized_code = code_text or None
 
+            category_suggestion = product.get("category_suggestion")
+            normalized_category = None
+            if category_suggestion is not None:
+                category_text = str(category_suggestion).strip()
+                normalized_category = (
+                    category_text if category_text in _CATEGORY_SET else None
+                )
+
             cleaned_products.append(
                 {
                     "raw_code": normalized_code,
                     "name": name,
+                    "category_suggestion": normalized_category,
                     "quantity": quantity,
                     "unit_price": unit_price,
                     "total_price": total_price,
@@ -252,7 +275,14 @@ EXTRACTION RULES:
    - Date (format: DD-MM-YYYY)
    - Total amount (final total value)
    - Currency (MDL, EUR, USD, etc.)
-   - List of products with: code, name, quantity, unit_price, total_price
+   - List of products with: code, name, optional category_suggestion, quantity, unit_price, total_price
+
+1b. CATEGORY SUGGESTION (optional, enum-only):
+   - For each product, you MAY include `category_suggestion` if you are confident.
+   - `category_suggestion` MUST be exactly one of:
+     General, Produce, Dairy, Meat, Pantry, Snacks, Beverages, Household, Conserve, Cereale
+   - If unsure, set `category_suggestion` to null.
+   - Do NOT guess "General" as a default.
 
 2. CRITICAL - Column Identification:
    - Look for column headers with these names:
@@ -304,6 +334,7 @@ Return a JSON object with this exact structure:
     {{
       "raw_code": "string or null",
       "name": "string",
+      "category_suggestion": "one of: General, Produce, Dairy, Meat, Pantry, Snacks, Beverages, Household, Conserve, Cereale (or null if unsure)",
       "quantity": float,
       "unit_price": float,
       "total_price": float,
