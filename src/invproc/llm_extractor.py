@@ -231,6 +231,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 Product(
                     raw_code="4840167001399",
                     name="200G UNT CIOCOLATA JLC",
+                    category_suggestion=None,
                     quantity=5.0,
                     unit_price=43.43,
                     total_price=217.15,
@@ -243,6 +244,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 Product(
                     raw_code="4840167002500",
                     name="CIOCOLATA ALBA 70% 200G",
+                    category_suggestion=None,
                     quantity=4.0,
                     unit_price=41.58,
                     total_price=166.32,
