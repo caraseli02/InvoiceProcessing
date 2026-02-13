@@ -58,6 +58,8 @@ INSTANCE_ID = (
     or f"local-{uuid.uuid4().hex[:12]}"
 )
 
+PROCESS_ID = str(os.getpid())
+
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
@@ -198,7 +200,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # Let browser JS read these for production cache verification.
-    expose_headers=["X-Extract-Cache", "X-Instance-Id"],
+    expose_headers=["X-Extract-Cache", "X-Instance-Id", "X-Process-Id", "X-Extract-File-Hash"],
 )
 
 # Initialize rate limiter
@@ -246,6 +248,7 @@ async def extract_invoice(
 ) -> InvoiceData:
     """Extract structured data from uploaded invoice PDF."""
     response.headers["X-Instance-Id"] = INSTANCE_ID
+    response.headers["X-Process-Id"] = PROCESS_ID
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
@@ -266,6 +269,14 @@ async def extract_invoice(
         _, file_hash = await run_in_threadpool(
             _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
+
+        if os.getenv("EXTRACT_CACHE_DEBUG_HEADERS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            response.headers["X-Extract-File-Hash"] = file_hash[:12]
 
         if config.extract_cache_enabled:
             extract_cache.configure(

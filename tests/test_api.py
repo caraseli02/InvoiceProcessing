@@ -234,6 +234,7 @@ def test_extract_cache_hit_skips_second_llm_call(client):
     assert first.headers.get("X-Extract-Cache") == "miss"
     assert second.headers.get("X-Extract-Cache") == "hit"
     assert second.headers.get("X-Instance-Id")
+    assert second.headers.get("X-Process-Id")
     assert first.json() == second.json()
     assert call_count == 1
 
@@ -249,6 +250,7 @@ def test_extract_cache_header_off_when_disabled(client):
     assert response.status_code == 200
     assert response.headers.get("X-Extract-Cache") == "off"
     assert response.headers.get("X-Instance-Id")
+    assert response.headers.get("X-Process-Id")
 
 
 def test_extract_cache_config_change_forces_miss(client):
