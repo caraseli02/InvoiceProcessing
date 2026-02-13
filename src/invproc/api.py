@@ -48,6 +48,14 @@ logger = logging.getLogger(__name__)
 
 extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
 
+# Env parsing helpers
+def _env_truthy(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Used for debugging in multi-instance and/or multi-worker deployments.
 # Prefer a platform-provided stable id when available.
 INSTANCE_ID = (
@@ -57,8 +65,6 @@ INSTANCE_ID = (
     or os.getenv("HOSTNAME")
     or f"local-{uuid.uuid4().hex[:12]}"
 )
-
-PROCESS_ID = str(os.getpid())
 
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
@@ -215,8 +221,11 @@ limiter = Limiter(
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Attach debugging headers to all responses (including /health)."""
     response = await call_next(request)
-    response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
-    response.headers.setdefault("X-Process-Id", PROCESS_ID)
+    debug_enabled = _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS")
+    observability_enabled = _env_truthy("EXTRACT_OBSERVABILITY_HEADERS") or debug_enabled
+    if observability_enabled:
+        response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
+        response.headers.setdefault("X-Process-Id", str(os.getpid()))
     return response
 
 
@@ -256,9 +265,6 @@ async def extract_invoice(
     validator: InvoiceValidator = Depends(get_validator),
 ) -> InvoiceData:
     """Extract structured data from uploaded invoice PDF."""
-    response.headers["X-Instance-Id"] = INSTANCE_ID
-    response.headers["X-Process-Id"] = PROCESS_ID
-
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -279,12 +285,7 @@ async def extract_invoice(
             _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
-        if os.getenv("EXTRACT_CACHE_DEBUG_HEADERS", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
+        if _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS"):
             response.headers["X-Extract-File-Hash"] = file_hash[:12]
 
         if config.extract_cache_enabled:

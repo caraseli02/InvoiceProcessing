@@ -20,6 +20,7 @@ def setup_test_config():
     os.environ["DEV_BYPASS_API_KEY"] = "false"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
     os.environ["EXTRACT_CACHE_ENABLED"] = "false"
+    os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "false"
     os.environ["EXTRACT_CACHE_TTL_SEC"] = "3600"
     os.environ["EXTRACT_CACHE_MAX_ENTRIES"] = "64"
     limiter.reset()
@@ -33,6 +34,7 @@ def setup_test_config():
     os.environ.pop("DEV_BYPASS_API_KEY", None)
     os.environ.pop("MODEL", None)
     os.environ.pop("EXTRACT_CACHE_ENABLED", None)
+    os.environ.pop("EXTRACT_OBSERVABILITY_HEADERS", None)
     os.environ.pop("EXTRACT_CACHE_TTL_SEC", None)
     os.environ.pop("EXTRACT_CACHE_MAX_ENTRIES", None)
     limiter.reset()
@@ -205,6 +207,7 @@ def test_health_check_structure(client):
 def test_extract_cache_hit_skips_second_llm_call(client):
     """Test identical file upload is served from cache on second request."""
     os.environ["EXTRACT_CACHE_ENABLED"] = "true"
+    os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "true"
     reload_config()
 
     call_count = 0
@@ -249,8 +252,8 @@ def test_extract_cache_header_off_when_disabled(client):
         )
     assert response.status_code == 200
     assert response.headers.get("X-Extract-Cache") == "off"
-    assert response.headers.get("X-Instance-Id")
-    assert response.headers.get("X-Process-Id")
+    assert response.headers.get("X-Instance-Id") is None
+    assert response.headers.get("X-Process-Id") is None
 
 
 def test_extract_cache_config_change_forces_miss(client):
