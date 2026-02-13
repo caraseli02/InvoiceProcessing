@@ -211,6 +211,15 @@ limiter = Limiter(
 )
 
 
+@app.middleware("http")
+async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Attach debugging headers to all responses (including /health)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
+    response.headers.setdefault("X-Process-Id", PROCESS_ID)
+    return response
+
+
 @app.get("/health")
 @limiter.exempt
 async def health_check() -> Dict[str, Any]:
