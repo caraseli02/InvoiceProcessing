@@ -90,7 +90,7 @@ PYTHONPATH=src python -c "import invproc.api; print(invproc.api.__file__)"
 When enabled, `/extract` returns:
 
 - `X-Extract-Cache: hit|miss|off`
-- `X-Instance-Id` and `X-Process-Id` (only when `EXTRACT_OBSERVABILITY_HEADERS=true`)
+- `X-Instance-Id` and `X-Process-Id` (only when `EXTRACT_OBSERVABILITY_HEADERS=true` or `EXTRACT_CACHE_DEBUG_HEADERS=true`)
 - `X-Extract-File-Hash` (only when `EXTRACT_CACHE_DEBUG_HEADERS=true`)
 
 ### Docker Deployment
