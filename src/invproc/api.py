@@ -48,6 +48,24 @@ logger = logging.getLogger(__name__)
 
 extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
 
+# Env parsing helpers
+def _env_truthy(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Used for debugging in multi-instance and/or multi-worker deployments.
+# Prefer a platform-provided stable id when available.
+INSTANCE_ID = (
+    os.getenv("INSTANCE_ID")
+    or os.getenv("RENDER_INSTANCE_ID")
+    or os.getenv("DYNO")
+    or os.getenv("HOSTNAME")
+    or f"local-{uuid.uuid4().hex[:12]}"
+)
+
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
@@ -187,6 +205,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Let browser JS read these for production cache verification.
+    expose_headers=["X-Extract-Cache", "X-Instance-Id", "X-Process-Id", "X-Extract-File-Hash"],
 )
 
 # Initialize rate limiter
@@ -195,6 +215,18 @@ limiter = Limiter(
     default_limits=["10/minute"],
     swallow_errors=True,
 )
+
+
+@app.middleware("http")
+async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Attach debugging headers to all responses (including /health)."""
+    response = await call_next(request)
+    debug_enabled = _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS")
+    observability_enabled = _env_truthy("EXTRACT_OBSERVABILITY_HEADERS") or debug_enabled
+    if observability_enabled:
+        response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
+        response.headers.setdefault("X-Process-Id", str(os.getpid()))
+    return response
 
 
 @app.get("/health")
@@ -253,6 +285,9 @@ async def extract_invoice(
             _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
+        if _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS"):
+            response.headers["X-Extract-File-Hash"] = file_hash[:12]
+
         if config.extract_cache_enabled:
             extract_cache.configure(
                 ttl_sec=config.extract_cache_ttl_sec,
@@ -266,6 +301,8 @@ async def extract_invoice(
                 return InvoiceData(**cached_payload)
             response.headers["X-Extract-Cache"] = "miss"
             logger.info("extract cache miss: file_hash=%s", file_hash[:12])
+        else:
+            response.headers["X-Extract-Cache"] = "off"
 
         text_grid, _metadata = await run_in_threadpool(
             pdf_processor.extract_content, temp_pdf_path

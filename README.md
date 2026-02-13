@@ -70,11 +70,28 @@ invproc process invoice.pdf --output results/invoice.json
 ### Local Development
 
 ```bash
-# Start API server
-python -m invproc --mode api
+# Start API server (use repo code, not an accidentally-installed invproc from elsewhere)
+PYTHONPATH=src python -m invproc --mode api
+
+# Or:
+./bin/dev-api
 
 # Access API documentation at http://localhost:8000/docs
 ```
+
+If debugging a running server, verify which code is imported:
+
+```bash
+PYTHONPATH=src python -c "import invproc.api; print(invproc.api.__file__)"
+```
+
+### Extract Cache Debug Headers
+
+When enabled, `/extract` returns:
+
+- `X-Extract-Cache: hit|miss|off`
+- `X-Instance-Id` and `X-Process-Id` (only when `EXTRACT_OBSERVABILITY_HEADERS=true` or `EXTRACT_CACHE_DEBUG_HEADERS=true`)
+- `X-Extract-File-Hash` (only when `EXTRACT_CACHE_DEBUG_HEADERS=true`)
 
 ### Docker Deployment
 
