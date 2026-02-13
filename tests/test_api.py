@@ -233,8 +233,22 @@ def test_extract_cache_hit_skips_second_llm_call(client):
     assert second.status_code == 200
     assert first.headers.get("X-Extract-Cache") == "miss"
     assert second.headers.get("X-Extract-Cache") == "hit"
+    assert second.headers.get("X-Instance-Id")
     assert first.json() == second.json()
     assert call_count == 1
+
+
+def test_extract_cache_header_off_when_disabled(client):
+    """When cache is disabled, header should be present for observability."""
+    with open("test_invoices/invoice-test.pdf", "rb") as f:
+        response = client.post(
+            "/extract",
+            files={"file": ("test.pdf", f, "application/pdf")},
+            headers={"X-API-Key": "test-api-key"},
+        )
+    assert response.status_code == 200
+    assert response.headers.get("X-Extract-Cache") == "off"
+    assert response.headers.get("X-Instance-Id")
 
 
 def test_extract_cache_config_change_forces_miss(client):

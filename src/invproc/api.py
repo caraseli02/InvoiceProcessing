@@ -48,6 +48,16 @@ logger = logging.getLogger(__name__)
 
 extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
 
+# Used for debugging in multi-instance and/or multi-worker deployments.
+# Prefer a platform-provided stable id when available.
+INSTANCE_ID = (
+    os.getenv("INSTANCE_ID")
+    or os.getenv("RENDER_INSTANCE_ID")
+    or os.getenv("DYNO")
+    or os.getenv("HOSTNAME")
+    or f"local-{uuid.uuid4().hex[:12]}"
+)
+
 
 def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
@@ -187,6 +197,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Let browser JS read these for production cache verification.
+    expose_headers=["X-Extract-Cache", "X-Instance-Id"],
 )
 
 # Initialize rate limiter
@@ -233,6 +245,8 @@ async def extract_invoice(
     validator: InvoiceValidator = Depends(get_validator),
 ) -> InvoiceData:
     """Extract structured data from uploaded invoice PDF."""
+    response.headers["X-Instance-Id"] = INSTANCE_ID
+
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,6 +280,8 @@ async def extract_invoice(
                 return InvoiceData(**cached_payload)
             response.headers["X-Extract-Cache"] = "miss"
             logger.info("extract cache miss: file_hash=%s", file_hash[:12])
+        else:
+            response.headers["X-Extract-Cache"] = "off"
 
         text_grid, _metadata = await run_in_threadpool(
             pdf_processor.extract_content, temp_pdf_path
