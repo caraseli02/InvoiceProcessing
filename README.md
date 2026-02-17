@@ -168,6 +168,8 @@ Authorization: Bearer <supabase-access-token>
 
 - For invoice MVP integration issues (auth mismatch, parser edge cases, API scope alignment), see:
   - `docs/solutions/integration-issues/invoice-mvp-auth-and-parser-alignment-20260211.md`
+- For FastAPI startup failure `ModuleNotFoundError: No module named 'supabase'`, see:
+  - `docs/solutions/workflow-issues/fastapi-server-startup-fails-supabase-dependency-missing-20260217.md`
 - For `/extract` 500 errors caused by zero-valued LLM product rows, see:
   - `docs/solutions/runtime-errors/zero-valued-llm-product-rows-caused-extract-500-20260211.md`
 
