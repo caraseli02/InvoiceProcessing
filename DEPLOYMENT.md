@@ -90,6 +90,8 @@ curl -X POST "https://invoice-processing-api.onrender.com/extract" \
 - [ ] Test with real invoice PDFs
 - [ ] Monitor logs in Render dashboard
 - [ ] Set up error alerts (Render notifies you)
+- [ ] Follow PR deploy evidence requirements in `docs/quality-gates.md`
+- [ ] Run pre-deploy and post-deploy checks documented in PR
 
 ## Known Limitations (Free Tier)
 
@@ -168,3 +170,10 @@ Render provides built-in:
 3. **Error handling**: Implement retry logic for cold starts
 4. **Cost monitoring**: Track OpenAI API usage
 5. **Backup plan**: Keep CLI version for offline processing
+
+## CI Quality Gate Alignment
+
+This deployment flow is aligned with strict CI policy in `docs/quality-gates.md`:
+- baseline checks (`ruff`, `mypy`, `pytest` + coverage >= 80%, `/health` smoke)
+- change-type policy (`change:feature`, `change:refactor`, `change:deploy`)
+- required deploy evidence in PR body for `change:deploy`

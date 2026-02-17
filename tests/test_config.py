@@ -1,6 +1,5 @@
 """Tests for InvoiceConfig."""
 
-import os
 import pytest
 from invproc.config import InvoiceConfig, get_config, reload_config
 
@@ -29,45 +28,45 @@ def test_get_allowed_currencies_empty_items():
     assert config.get_allowed_currencies() == {"EUR", "USD", "GBP"}
 
 
-def test_supabase_settings_default():
+def test_supabase_settings_default(monkeypatch):
     """Test Supabase settings default to None."""
-    config = InvoiceConfig()
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    config = InvoiceConfig(_env_file=None)
     assert config.supabase_url is None
     assert config.supabase_service_role_key is None
 
 
-def test_supabase_settings_from_env():
+def test_supabase_settings_from_env(monkeypatch):
     """Test Supabase auth settings can be loaded from environment."""
-    os.environ["SUPABASE_URL"] = "https://example.supabase.co"
-    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "service-role"
-    config = InvoiceConfig()
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service-role")
+    config = InvoiceConfig(_env_file=None)
     assert config.supabase_url == "https://example.supabase.co"
     assert config.supabase_service_role_key == "service-role"
-    del os.environ["SUPABASE_URL"]
-    del os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 
-def test_config_singleton():
+def test_config_singleton(monkeypatch):
     """Test that get_config returns singleton instance."""
-    os.environ["MOCK"] = "true"
+    monkeypatch.setenv("MOCK", "true")
     try:
         config1 = get_config()
         config2 = get_config()
         assert config1 is config2
     finally:
-        del os.environ["MOCK"]
+        monkeypatch.delenv("MOCK", raising=False)
         reload_config()
 
 
-def test_reload_config():
+def test_reload_config(monkeypatch):
     """Test that reload_config creates new config instance."""
     config1 = get_config()
-    os.environ["ALLOWED_CURRENCIES"] = "JPY,CNY"
+    monkeypatch.setenv("ALLOWED_CURRENCIES", "JPY,CNY")
     config2 = reload_config()
     assert config1 is not config2
     assert "JPY" in config2.get_allowed_currencies()
     assert "CNY" in config2.get_allowed_currencies()
-    del os.environ["ALLOWED_CURRENCIES"]
+    monkeypatch.delenv("ALLOWED_CURRENCIES", raising=False)
 
 def test_validate_config_empty_currencies():
     """Test that empty ALLOWED_CURRENCIES raises validation error."""

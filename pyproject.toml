@@ -46,6 +46,7 @@ build-backend = "hatchling.build"
 packages = ["src/invproc"]
 
 [tool.pytest.ini_options]
+addopts = "--cov=src/invproc --cov-report=term-missing --cov-fail-under=80"
 markers = [
     "e2e: marks tests as end-to-end",
 ]
