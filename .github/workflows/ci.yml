@@ -6,6 +6,13 @@ on:
       - main
       - "feat/**"
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - labeled
+      - unlabeled
 
 jobs:
   lint:
