@@ -31,7 +31,8 @@ Create a `.env` file in the project root:
 OPENAI_API_KEY=sk-proj-...
 API_HOST=0.0.0.0
 API_PORT=8000
-API_KEYS=dev-key-12345
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SCALE_FACTOR=0.2
 TOLERANCE=3
 OCR_DPI=150
@@ -114,7 +115,7 @@ Returns service health status (no authentication required).
 #### Extract Invoice
 ```bash
 POST /extract
-Headers: X-API-Key: <your-api-key>
+Headers: Authorization: Bearer <supabase-jwt>
 Body: multipart/form-data with "file" field
 ```
 
@@ -123,7 +124,7 @@ Extracts structured data from invoice PDF.
 **Example:**
 ```bash
 curl -X POST "http://localhost:8000/extract" \
-  -H "X-API-Key: dev-key-12345" \
+  -H "Authorization: Bearer <supabase-jwt>" \
   -F "file=@invoice.pdf"
 ```
 
@@ -150,29 +151,25 @@ curl -X POST "http://localhost:8000/extract" \
 
 ### Authentication
 
-API key authentication is required for the `/extract` endpoint. Set your API keys in the `API_KEYS` environment variable (comma-separated).
+Supabase JWT authentication is required for protected endpoints (`/extract` and `/invoice/preview-pricing`).
 
-**Development:**
+Configure the backend with:
 ```env
-API_KEYS=dev-key-12345
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-**Production:**
-```env
-API_KEYS=prod-key-abc123,team-key-xyz789
-```
-
-Generate secure API key:
-```python
-import secrets
-api_key = secrets.token_urlsafe(32)
-print(api_key)
+Clients must send:
+```http
+Authorization: Bearer <supabase-access-token>
 ```
 
 ### Troubleshooting
 
 - For invoice MVP integration issues (auth mismatch, parser edge cases, API scope alignment), see:
   - `docs/solutions/integration-issues/invoice-mvp-auth-and-parser-alignment-20260211.md`
+- For FastAPI startup failure `ModuleNotFoundError: No module named 'supabase'`, see:
+  - `docs/solutions/workflow-issues/fastapi-server-startup-fails-supabase-dependency-missing-20260217.md`
 - For `/extract` 500 errors caused by zero-valued LLM product rows, see:
   - `docs/solutions/runtime-errors/zero-valued-llm-product-rows-caused-extract-500-20260211.md`
 
@@ -304,7 +301,8 @@ docker run -d \
   --name invoice-api \
   -p 8000:8000 \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e API_KEYS=prod-key-12345 \
+  -e SUPABASE_URL=https://your-project-ref.supabase.co \
+  -e SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY \
   invoice-processing-api:1.0.0
 ```
 
@@ -330,7 +328,7 @@ Quick deploy to Render with 1-click setup:
 **Steps:**
 1. Push code to GitHub
 2. Create Render web service from repo
-3. Add environment variables: `OPENAI_API_KEY`, `API_KEYS`
+3. Add environment variables: `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 4. Deploy
 
 **Detailed guide:** See [DEPLOYMENT.md](DEPLOYMENT.md)
@@ -343,7 +341,7 @@ curl https://invoice-processing-api.onrender.com/health
 
 # Test extraction
 curl -X POST "https://invoice-processing-api.onrender.com/extract" \
-  -H "X-API-Key: your-api-key" \
+  -H "Authorization: Bearer <supabase-jwt>" \
   -F "file=@invoice.pdf"
 ```
 

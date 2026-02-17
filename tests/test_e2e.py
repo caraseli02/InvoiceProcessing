@@ -16,12 +16,10 @@ cli_runner = CliRunner()
 @pytest.mark.e2e
 def test_cli_api_consistency():
     """Test that CLI and API produce identical results."""
-    original_api_keys = os.environ.get("API_KEYS")
     original_mock = os.environ.get("MOCK")
 
     try:
-        os.environ["API_KEYS"] = "test-api-key"
-        os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
+        os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
         os.environ["MOCK"] = "true"
         reload_config()
 
@@ -30,7 +28,7 @@ def test_cli_api_consistency():
                 api_response = api_client.post(
                     "/extract",
                     files={"file": ("test.pdf", f, "application/pdf")},
-                    headers={"X-API-Key": "test-api-key"},
+                    headers={"Authorization": "Bearer test-supabase-jwt"},
                 )
 
         cli_result = cli_runner.invoke(
@@ -48,11 +46,6 @@ def test_cli_api_consistency():
         assert api_data["currency"] == cli_data["currency"]
         assert len(api_data["products"]) == len(cli_data["products"])
     finally:
-        if original_api_keys is not None:
-            os.environ["API_KEYS"] = original_api_keys
-        elif "API_KEYS" in os.environ:
-            del os.environ["API_KEYS"]
-
         if original_mock is not None:
             os.environ["MOCK"] = original_mock
         elif "MOCK" in os.environ:
