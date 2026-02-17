@@ -29,21 +29,22 @@ def test_get_allowed_currencies_empty_items():
     assert config.get_allowed_currencies() == {"EUR", "USD", "GBP"}
 
 
-def test_api_keys_default():
-    """Test that api_keys can be loaded from .env file or defaults to empty."""
+def test_supabase_settings_default():
+    """Test Supabase settings default to None."""
     config = InvoiceConfig()
-    assert isinstance(config.api_keys, str)
-    assert len(config.api_keys) >= 0
+    assert config.supabase_url is None
+    assert config.supabase_service_role_key is None
 
 
-def test_api_keys_from_env():
-    """Test that api_keys can be loaded from environment variable."""
-    os.environ["API_KEYS"] = "key1,key2,key3"
+def test_supabase_settings_from_env():
+    """Test Supabase auth settings can be loaded from environment."""
+    os.environ["SUPABASE_URL"] = "https://example.supabase.co"
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "service-role"
     config = InvoiceConfig()
-    assert "key1" in config.api_keys
-    assert "key2" in config.api_keys
-    assert "key3" in config.api_keys
-    del os.environ["API_KEYS"]
+    assert config.supabase_url == "https://example.supabase.co"
+    assert config.supabase_service_role_key == "service-role"
+    del os.environ["SUPABASE_URL"]
+    del os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 
 def test_config_singleton():

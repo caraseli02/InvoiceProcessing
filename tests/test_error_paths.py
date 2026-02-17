@@ -21,13 +21,11 @@ from openai import APITimeoutError
 def setup_test_config():
     """Setup test configuration."""
     os.environ["MOCK"] = "true"
-    os.environ["API_KEYS"] = "test-api-key"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
     limiter.reset()
     reload_config()
     yield
     os.environ.pop("MOCK", None)
-    os.environ.pop("API_KEYS", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
     limiter.reset()
     reload_config()
@@ -314,7 +312,7 @@ def test_api_file_size_guard_large_file(api_client):
     response = api_client.post(
         "/extract",
         files={"file": ("large.pdf", large_file, "application/pdf")},
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
     assert response.status_code == 413
     assert "too large" in response.json()["detail"].lower()
@@ -329,7 +327,7 @@ def test_api_file_size_guard_exactly_limit(api_client):
     response = api_client.post(
         "/extract",
         files={"file": ("limit.pdf", limit_file, "application/pdf")},
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
     # Should pass size check (request may still fail because content is not a valid PDF)
     assert (
@@ -348,7 +346,7 @@ def test_api_config_race_condition(api_client):
                 response = api_client.post(
                     "/extract",
                     files={"file": ("test.pdf", f, "application/pdf")},
-                    headers={"X-API-Key": "test-api-key"},
+                    headers={"Authorization": "Bearer test-supabase-jwt"},
                 )
                 results.append(response.status_code)
         except Exception as e:
@@ -393,7 +391,7 @@ def test_api_malformed_upload(api_client):
     """Test API handles malformed upload data."""
     # Upload invalid multipart data
     response = api_client.post(
-        "/extract", data={"file": "not a file"}, headers={"X-API-Key": "test-api-key"}
+        "/extract", data={"file": "not a file"}, headers={"Authorization": "Bearer test-supabase-jwt"}
     )
     assert response.status_code != 200
 
@@ -409,7 +407,7 @@ def test_api_missing_content_length(api_client):
     response = api_client.post(
         "/extract",
         files={"file": ("test.pdf", small_file, "application/pdf")},
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
     # Should still process (FastAPI sets Content-Length automatically)
     # Note: May hit rate limiter (429) after multiple test runs

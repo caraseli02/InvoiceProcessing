@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 import uuid
-from typing import Any, BinaryIO, Dict, Optional, Set, cast
+from typing import Any, BinaryIO, Dict, cast
 
 from fastapi import (
     Depends,
@@ -15,20 +15,19 @@ from fastapi import (
     HTTPException,
     Request,
     Response,
-    Security,
     UploadFile,
     status,
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from openai import APITimeoutError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from invproc.auth import verify_supabase_jwt
 from invproc.config import InvoiceConfig, get_config
 from invproc.extract_cache import InMemoryExtractCache
 from invproc.exceptions import ContractError
@@ -93,46 +92,9 @@ def get_allowed_origins() -> list[str]:
     """Get allowed CORS origins from environment."""
     origins = os.getenv(
         "ALLOWED_ORIGINS",
-        (
-            "http://localhost:3000,http://localhost:5173,"
-            "http://127.0.0.1:5173,https://lavio.vercel.app"
-        ),
+        "http://localhost:5173,https://lavio.vercel.app",
     )
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
-
-
-def get_api_keys(config: InvoiceConfig = Depends(get_config)) -> Set[str]:
-    """Get API keys from configuration."""
-    keys = config.api_keys or ""
-    return {k.strip() for k in keys.split(",") if k.strip()}
-
-
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def verify_api_key(
-    api_key: Optional[str] = Security(api_key_header),
-    bearer_credentials: Optional[HTTPAuthorizationCredentials] = Security(
-        bearer_scheme
-    ),
-    valid_keys: Set[str] = Depends(get_api_keys),
-    config: InvoiceConfig = Depends(get_config),
-) -> str:
-    """Verify API key from X-API-Key or Authorization Bearer token."""
-    if config.dev_bypass_api_key:
-        return "dev-bypass"
-
-    candidate = api_key
-    if not candidate and bearer_credentials:
-        candidate = bearer_credentials.credentials
-
-    if not candidate or candidate not in valid_keys:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key",
-        )
-    return candidate
 
 
 def _save_upload_with_limit(
@@ -202,7 +164,7 @@ allowed_origins = get_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     # Let browser JS read these for production cache verification.
@@ -245,7 +207,7 @@ async def health_check() -> Dict[str, Any]:
     response_model=InvoiceData,
     status_code=status.HTTP_200_OK,
     responses={
-        401: {"description": "Invalid API key"},
+        401: {"description": "Invalid or expired token"},
         400: {"description": "Invalid PDF file"},
         422: {"description": "Unprocessable extraction output"},
         413: {"description": "PDF exceeds configured size limit"},
@@ -259,12 +221,13 @@ async def extract_invoice(
     request: Request,
     response: Response,
     file: UploadFile = File(..., description="Invoice PDF file"),
-    api_key: str = Depends(verify_api_key),
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     llm_extractor: LLMExtractor = Depends(get_llm_extractor),
     validator: InvoiceValidator = Depends(get_validator),
 ) -> InvoiceData:
     """Extract structured data from uploaded invoice PDF."""
+    _ = user
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -349,7 +312,7 @@ async def extract_invoice(
     response_model=InvoicePreviewPricingResponse,
     status_code=status.HTTP_200_OK,
     responses={
-        401: {"description": "Invalid API key"},
+        401: {"description": "Invalid or expired token"},
         400: {"description": "Invalid payload"},
         429: {"description": "Rate limit exceeded"},
     },
@@ -358,10 +321,11 @@ async def extract_invoice(
 async def preview_invoice_pricing(
     request: Request,
     payload: InvoicePreviewPricingRequest,
-    api_key: str = Depends(verify_api_key),
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
     import_service: InvoiceImportService = Depends(get_import_service),
 ) -> InvoicePreviewPricingResponse:
     """Compute canonical pricing preview for invoice rows."""
+    _ = user
     return await run_in_threadpool(import_service.preview_pricing, payload)
 
 

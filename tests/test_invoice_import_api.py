@@ -11,16 +11,12 @@ from invproc.config import reload_config
 
 @pytest.fixture(autouse=True)
 def setup_test_config() -> None:
-    os.environ["API_KEYS"] = "test-api-key"
-    os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
+    os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
     os.environ["MOCK"] = "true"
-    os.environ["DEV_BYPASS_API_KEY"] = "false"
     reload_config()
     yield
-    os.environ.pop("API_KEYS", None)
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
-    os.environ.pop("DEV_BYPASS_API_KEY", None)
     reload_config()
 
 
@@ -58,7 +54,7 @@ def test_preview_pricing_handles_missing_weight(client: TestClient) -> None:
                 },
             ],
         },
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
 
     assert response.status_code == 200
@@ -84,7 +80,7 @@ def test_preview_pricing_returns_liquid_warning(client: TestClient) -> None:
                 }
             ],
         },
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
 
     assert response.status_code == 200
@@ -109,7 +105,7 @@ def test_preview_pricing_with_valid_bearer_auth(client: TestClient) -> None:
                 }
             ],
         },
-        headers={"Authorization": "Bearer test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
     assert response.status_code == 200
 
@@ -151,7 +147,7 @@ def test_import_endpoint_not_available_in_mvp_simple_mode(client: TestClient) ->
                 }
             ],
         },
-        headers={"X-API-Key": "test-api-key"},
+        headers={"Authorization": "Bearer test-supabase-jwt"},
     )
 
     assert response.status_code == 404

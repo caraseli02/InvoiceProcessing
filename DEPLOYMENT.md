@@ -37,7 +37,8 @@ git push origin main
 | Variable | Value | Required |
 |----------|-------|----------|
 | `OPENAI_API_KEY` | `sk-proj-...` | Yes |
-| `API_KEYS` | `your-key-1,another-key-2` | Yes |
+| `SUPABASE_URL` | `https://your-project-ref.supabase.co` | Yes |
+| `SUPABASE_SERVICE_ROLE_KEY` | `your-service-role-key` | Yes |
 | `ALLOWED_ORIGINS` | `https://yourdomain.com` | No |
 | `SCALE_FACTOR` | `0.2` | No |
 | `TOLERANCE` | `3` | No |
@@ -46,12 +47,6 @@ git push origin main
 | `OCR_LANGUAGES` | `ron+eng+rus` | No |
 | `LLM_MODEL` | `gpt-4o-mini` | No |
 | `LLM_TEMPERATURE` | `0` | No |
-
-**Generate secure API keys:**
-```python
-import secrets
-print(secrets.token_urlsafe(32))  # e.g., "xKj8mN2pQ5rT7vY9wZ3b"
-```
 
 **Resources (free tier):**
 - **Memory**: 512Mi
@@ -80,7 +75,7 @@ curl https://invoice-processing-api.onrender.com/health
 **Test extraction:**
 ```bash
 curl -X POST "https://invoice-processing-api.onrender.com/extract" \
-  -H "X-API-Key: your-api-key" \
+  -H "Authorization: Bearer <supabase-jwt>" \
   -F "file=@invoice.pdf"
 ```
 
@@ -90,7 +85,7 @@ curl -X POST "https://invoice-processing-api.onrender.com/extract" \
 
 ## Production Checklist
 
-- [ ] Add production API keys
+- [ ] Add Supabase auth environment variables
 - [ ] Set `ALLOWED_ORIGINS` to your frontend domains
 - [ ] Test with real invoice PDFs
 - [ ] Monitor logs in Render dashboard
@@ -123,7 +118,8 @@ If you need always-on or faster processing:
 
 ### API Returns 401
 
-**Fix:** Verify `X-API-Key` header matches configured keys.
+**Fix:** Verify request uses a valid Supabase access token:
+`Authorization: Bearer <token>`
 
 ### Rate Limit Errors
 
@@ -142,7 +138,8 @@ If you need always-on or faster processing:
 ```env
 # Required
 OPENAI_API_KEY=sk-proj-...
-API_KEYS=key-1,key-2,key-3
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # Optional
 ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
@@ -166,7 +163,7 @@ Render provides built-in:
 
 ## Next Steps
 
-1. **Team onboarding**: Share API keys and documentation
+1. **Team onboarding**: Share Supabase auth expectations and documentation
 2. **Frontend integration**: Use `/extract` endpoint in your app
 3. **Error handling**: Implement retry logic for cold starts
 4. **Cost monitoring**: Track OpenAI API usage

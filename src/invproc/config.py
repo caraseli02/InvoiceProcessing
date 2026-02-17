@@ -160,14 +160,14 @@ class InvoiceConfig(BaseSettings):
         description="API port",
     )
 
-    api_keys: str = Field(
-        default="",
-        description="Comma-separated API keys for authentication",
+    supabase_url: Optional[str] = Field(
+        default=None,
+        description="Supabase project URL for JWT validation",
     )
 
-    dev_bypass_api_key: bool = Field(
-        default=False,
-        description="Bypass API key verification for local development only",
+    supabase_service_role_key: Optional[str] = Field(
+        default=None,
+        description="Supabase service role key for server-side token verification",
     )
 
     fx_lei_to_eur: float = Field(
