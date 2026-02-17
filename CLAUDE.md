@@ -17,6 +17,32 @@ Apply throughout all interactions: plans, explanations, code reviews, feedback. 
 - Use `--no-verify` only with explicit user approval in the current thread.
 - If a hook blocks a commit, fix hook/config/staged files first, then retry normal commit.
 
+## PR Quality Gate Policy (2026-02-17)
+
+- Strict merge gates are required for `main`.
+- Before opening/updating a PR, run:
+  - `python -m ruff check src/ tests/`
+  - `python -m mypy src/`
+  - `python -m pytest -q`
+- Coverage is enforced in `pytest` with fail-under `80%`.
+- PRs must include exactly one label:
+  - `change:feature`
+  - `change:refactor`
+  - `change:deploy`
+- PR body must include the evidence section that matches the label:
+  - `### Feature Test Evidence`
+  - `### Refactor Regression Evidence`
+  - `### Deploy Verification Plan`
+- Required branch protection checks for `main`:
+  - `lint`
+  - `typecheck`
+  - `tests`
+  - `health-smoke`
+  - `pr-policy`
+  - `quality-gate-pr`
+- CI workflow path: `.github/workflows/ci.yml`
+- Policy reference: `docs/quality-gates.md`
+
 ---
 
 ## Commands
@@ -98,7 +124,7 @@ Validation runs twice. First, Pydantic's `model_validator` on `Product` runs dur
 ## Key details to keep in mind
 
 - The `README.md` contains an older FastAPI blueprint (not the current CLI). The actual running code is entirely under `src/invproc/`.
-- `tests/` currently only has an empty `__init__.py` — no tests exist yet.
+- `tests/` is active and enforces project coverage >= 80% via pytest config.
 - The system prompt in `llm_extractor.py:_get_system_prompt()` is METRO Cash & Carry-specific (Romanian column headers like "Cant.", "Pret unitar", "Valoare incl.TVA"). Generalizing to other invoice formats will require prompt changes.
 - `response_format={"type": "json_object"}` is used instead of Pydantic-native structured output (`client.chat.completions.parse`). The JSON is manually parsed and fed to the Pydantic model.
 - Supported currencies are hardcoded in `models.py`: EUR, USD, MDL, RUB, RON.
