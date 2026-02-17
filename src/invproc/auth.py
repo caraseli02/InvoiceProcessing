@@ -42,6 +42,12 @@ def get_supabase_client(config: InvoiceConfig) -> Client:
 def fetch_supabase_user(token: str, client: Client) -> dict[str, Any]:
     """Return user payload for a verified Supabase JWT."""
     response = client.auth.get_user(token)
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
     user = response.user
     if user is None:
         raise HTTPException(
