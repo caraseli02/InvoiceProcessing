@@ -22,11 +22,12 @@ services:
       
       # Configure these in Render dashboard:
       # - OPENAI_API_KEY (required)
-      # - API_KEYS (required, comma-separated)
+      # - SUPABASE_URL (required)
+      # - SUPABASE_SERVICE_ROLE_KEY (required)
       # - ALLOWED_ORIGINS (optional, defaults to localhost domains + prod frontend)
 
       - key: ALLOWED_ORIGINS
-        value: http://localhost:3000,http://localhost:5173,https://lavio.vercel.app
+        value: http://localhost:5173,https://lavio.vercel.app
       
       - key: ALLOWED_CURRENCIES
         value: EUR,USD,MDL,RUB,RON
