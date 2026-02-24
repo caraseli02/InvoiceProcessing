@@ -271,6 +271,7 @@ async def extract_invoice(
             pdf_processor.extract_content, temp_pdf_path
         )
         invoice_data = await run_in_threadpool(llm_extractor.parse_with_llm, text_grid)
+        _normalize_kg_weighed_rows(invoice_data)
         validated_invoice = await run_in_threadpool(
             validator.validate_invoice, invoice_data
         )
@@ -339,10 +340,37 @@ def _add_row_metadata(invoice_data: InvoiceData) -> None:
         row_hash = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
         product.row_id = f"r_{row_hash}"
 
+        if (product.uom or "").strip().upper() == "KG" and product.weight_kg_candidate:
+            product.size_token = None
+            product.parse_confidence = None
+            continue
+
         parsed = parse_weight_candidate(product.name)
         product.weight_kg_candidate = parsed.weight_kg
         product.size_token = parsed.size_token
         product.parse_confidence = parsed.parse_confidence
+
+
+def _normalize_kg_weighed_rows(invoice_data: InvoiceData) -> None:
+    """
+    Normalize weighed KG rows to match invoice-import semantics.
+
+    For rows where `uom == "KG"`:
+    - Treat the extracted `quantity` as measured weight in kilograms (from "Cant.")
+    - Store that weight in `weight_kg_candidate`
+    - Rewrite `quantity` to 1 (one weighed item / line)
+    - Rewrite `unit_price` to `total_price` (VAT-inclusive end price per weighed item)
+    """
+    for product in invoice_data.products:
+        if (product.uom or "").strip().upper() != "KG":
+            continue
+
+        measured_weight_kg = product.quantity
+        product.weight_kg_candidate = measured_weight_kg
+        product.quantity = 1.0
+        product.unit_price = product.total_price
+        product.size_token = None
+        product.parse_confidence = None
 
 
 @app.exception_handler(RateLimitExceeded)

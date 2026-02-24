@@ -164,6 +164,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 {
                     "raw_code": normalized_code,
                     "name": name,
+                    "uom": _normalize_uom(product.get("uom")),
                     "category_suggestion": normalized_category,
                     "quantity": quantity,
                     "unit_price": unit_price,
@@ -231,6 +232,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 Product(
                     raw_code="4840167001399",
                     name="200G UNT CIOCOLATA JLC",
+                    uom=None,
                     category_suggestion=None,
                     quantity=5.0,
                     unit_price=43.43,
@@ -244,6 +246,7 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 Product(
                     raw_code="4840167002500",
                     name="CIOCOLATA ALBA 70% 200G",
+                    uom=None,
                     category_suggestion=None,
                     quantity=4.0,
                     unit_price=41.58,
@@ -277,7 +280,7 @@ EXTRACTION RULES:
    - Date (format: DD-MM-YYYY)
    - Total amount (final total value)
    - Currency (MDL, EUR, USD, etc.)
-   - List of products with: code, name, optional category_suggestion, quantity, unit_price, total_price
+   - List of products with: code, name, optional uom, optional category_suggestion, quantity, unit_price, total_price
 
 1b. CATEGORY SUGGESTION (optional, enum-only):
    - For each product, you MAY include `category_suggestion` if you are confident.
@@ -291,6 +294,7 @@ EXTRACTION RULES:
      * Quantity column: "{headers.quantity}"
      * Unit price column: "{headers.unit_price}"
      * Total price column: "{headers.total_price}"
+     * UOM/packaging column: usually "Mod amb" (or similar)
    - "{headers.quantity}" = Quantity (usually integers: 1, 2, 5, 10, 24)
    - "{headers.unit_price}" = Unit Price (usually decimals with 2 places)
    - "{headers.total_price}" = Total Price (rightmost column)
@@ -300,6 +304,8 @@ EXTRACTION RULES:
    - `quantity` MUST come from "{headers.quantity}" (e.g., "Cant.")
    - `unit_price` MUST come from "{headers.unit_price}" (e.g., "Pret unitar")
    - `total_price` MUST come from "{headers.total_price}" (e.g., "Valoare incl.TVA")
+   - `uom` MUST come from the UOM/packaging column (e.g., "Mod amb") when visible
+   - NOTE: When `uom` is "KG", `quantity` from "{headers.quantity}" may be a decimal weight (e.g., 0,878). Keep it as-is.
    - IMPORTANT: In many invoices, `quantity × unit_price` matches "Valoare fara TVA", NOT "Valoare incl.TVA"
    - Never alter quantity or total_price just to make math match.
 
@@ -336,6 +342,7 @@ Return a JSON object with this exact structure:
     {{
       "raw_code": "string or null",
       "name": "string",
+      "uom": "string or null (e.g., KG, BU, CU)",
       "category_suggestion": "one of: General, Produce, Dairy, Meat, Pantry, Snacks, Beverages, Household, Conserve, Cereale (or null if unsure)",
       "quantity": float,
       "unit_price": float,
@@ -345,3 +352,10 @@ Return a JSON object with this exact structure:
   ]
 }}
 """
+
+
+def _normalize_uom(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    return text or None

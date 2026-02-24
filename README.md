@@ -140,6 +140,7 @@ curl -X POST "http://localhost:8000/extract" \
     {
       "raw_code": "1234567890123",
       "name": "Product Name",
+      "uom": "BU",
       "quantity": 10.0,
       "unit_price": 12.34,
       "total_price": 123.40,
@@ -148,6 +149,14 @@ curl -X POST "http://localhost:8000/extract" \
   ]
 }
 ```
+
+**Note on weighed `KG` rows**
+
+When `uom` is `"KG"`, the backend normalizes fields for the import UI workflow:
+
+- `quantity` is set to `1` (one weighed item / line)
+- `unit_price` is set to `total_price` (VAT-inclusive end price per weighed item)
+- the measured weight from the invoice (`Cant.`) is exposed via `weight_kg_candidate`
 
 ### Authentication
 
@@ -163,6 +172,17 @@ Clients must send:
 ```http
 Authorization: Bearer <supabase-access-token>
 ```
+
+#### Local dev shortcut (optional)
+
+For local testing in Swagger (`/docs`) without Supabase, you can enable API key auth explicitly:
+
+```bash
+export ALLOW_API_KEY_AUTH=true
+export API_KEYS=dev-key-12345
+```
+
+Then click **Authorize** in Swagger UI and paste `dev-key-12345` as the token.
 
 ### Troubleshooting
 

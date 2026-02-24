@@ -11,6 +11,10 @@ class Product(BaseModel):
 
     raw_code: Optional[str] = Field(None, description="Product code/EAN if visible")
     name: str = Field(..., description="Product name")
+    uom: Optional[str] = Field(
+        None,
+        description="Unit of measure from invoice table (e.g., KG, BU, CU), if visible",
+    )
     category_suggestion: Optional[
         Literal[
             "General",
@@ -25,8 +29,22 @@ class Product(BaseModel):
             "Cereale",
         ]
     ] = Field(None, description="Best-effort category suggestion (enum) or null")
-    quantity: float = Field(..., gt=0, description="Quantity must be positive")
-    unit_price: float = Field(..., gt=0, description="Unit price must be positive")
+    quantity: float = Field(
+        ...,
+        gt=0,
+        description=(
+            "Quantity must be positive. For `uom=KG` rows this may be normalized to 1 "
+            "for import semantics."
+        ),
+    )
+    unit_price: float = Field(
+        ...,
+        gt=0,
+        description=(
+            "Unit price must be positive. For `uom=KG` rows this may be normalized to "
+            "the VAT-inclusive line price."
+        ),
+    )
     total_price: float = Field(
         ...,
         ge=0,

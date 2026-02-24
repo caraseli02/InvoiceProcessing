@@ -1,5 +1,6 @@
 """Supabase JWT authentication helpers for FastAPI endpoints."""
 
+import os
 from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, status
@@ -13,6 +14,18 @@ bearer_scheme = HTTPBearer(auto_error=False)
 _client: Optional[Client] = None
 _client_url: Optional[str] = None
 _client_key: Optional[str] = None
+
+
+def _get_api_keys() -> set[str]:
+    keys_raw = os.getenv("API_KEYS", "")
+    return {k.strip() for k in keys_raw.split(",") if k.strip()}
+
+
+def _env_truthy(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_supabase_client(config: InvoiceConfig) -> Client:
@@ -72,9 +85,13 @@ async def verify_supabase_jwt(
             detail="Missing bearer token",
         )
 
-    client = get_supabase_client(config)
     token = credentials.credentials
 
+    api_keys = _get_api_keys()
+    if _env_truthy("ALLOW_API_KEY_AUTH") and api_keys and token in api_keys:
+        return {"id": "api-key-user", "auth": "api_key"}
+
+    client = get_supabase_client(config)
     try:
         return fetch_supabase_user(token, client)
     except HTTPException:
