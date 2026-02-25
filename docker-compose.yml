@@ -10,7 +10,11 @@ services:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - API_KEYS=${API_KEYS:-dev-key-12345}
+      # Optional local-dev auth bypass for /docs testing:
+      #   export ALLOW_API_KEY_AUTH=true
+      #   export API_KEYS=dev-key-12345
+      - ALLOW_API_KEY_AUTH=${ALLOW_API_KEY_AUTH:-false}
+      - API_KEYS=${API_KEYS:-}
       - SCALE_FACTOR=0.2
       - TOLERANCE=3
       - OCR_DPI=300

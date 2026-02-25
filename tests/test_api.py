@@ -87,6 +87,7 @@ def test_extract_with_valid_auth(client):
     assert len(data["products"]) > 0
     assert "row_id" in data["products"][0]
     assert "weight_kg_candidate" in data["products"][0]
+    assert "uom" in data["products"][0]
     assert "category_suggestion" in data["products"][0]
 
 
