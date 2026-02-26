@@ -1,12 +1,16 @@
 """FastAPI application for invoice processing service."""
 
+from __future__ import annotations
+
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 import uuid
-from typing import Any, Dict, cast
+from typing import Any, AsyncIterator, Dict, cast
 
 from fastapi import (
+    APIRouter,
     Depends,
     FastAPI,
     File,
@@ -25,8 +29,9 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from invproc.auth import verify_supabase_jwt
-from invproc.config import InvoiceConfig, get_config
+from invproc.auth import SupabaseClientProvider, verify_supabase_jwt
+from invproc.config import InvoiceConfig, build_config
+from invproc.dependencies import AppResources, get_app_config, get_extract_cache
 from invproc.extract_cache import InMemoryExtractCache
 from invproc.exceptions import ContractError
 from invproc.import_service import InvoiceImportService
@@ -42,8 +47,8 @@ from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
 
 logger = logging.getLogger(__name__)
+router = APIRouter()
 
-extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
 
 # Env parsing helpers
 def _env_truthy(name: str) -> bool:
@@ -64,26 +69,12 @@ INSTANCE_ID = (
 )
 
 
-def get_pdf_processor(config: InvoiceConfig = Depends(get_config)) -> PDFProcessor:
-    """Get PDF processor instance (per-request)."""
-    return PDFProcessor(config)
-
-
-def get_llm_extractor(config: InvoiceConfig = Depends(get_config)) -> LLMExtractor:
-    """Get LLM extractor instance (per-request)."""
-    return LLMExtractor(config)
-
-
-def get_validator(config: InvoiceConfig = Depends(get_config)) -> InvoiceValidator:
-    """Get validator instance (per-request)."""
-    return InvoiceValidator(config)
-
-
-def get_import_service(
-    config: InvoiceConfig = Depends(get_config),
-) -> InvoiceImportService:
-    """Get invoice preview service instance."""
-    return InvoiceImportService(config=config)
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["10/minute"],
+    swallow_errors=True,
+)
 
 
 def get_allowed_origins() -> list[str]:
@@ -95,35 +86,51 @@ def get_allowed_origins() -> list[str]:
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
 
-# Initialize app and rate limiter
-app = FastAPI(
-    title="Invoice Processing Service",
-    description="Extract structured data from invoice PDFs using AI",
-    version="1.0.0",
-)
-
-# Load CORS origins
-allowed_origins = get_allowed_origins()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Let browser JS read these for production cache verification.
-    expose_headers=["X-Extract-Cache", "X-Instance-Id", "X-Process-Id", "X-Extract-File-Hash"],
-)
-
-# Initialize rate limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["10/minute"],
-    swallow_errors=True,
-)
+def build_app_resources() -> AppResources:
+    """Create app-scoped resources for a FastAPI app instance."""
+    config = build_config()
+    extract_cache = InMemoryExtractCache(
+        ttl_sec=config.extract_cache_ttl_sec,
+        max_entries=config.extract_cache_max_entries,
+    )
+    supabase_client_provider = SupabaseClientProvider(config)
+    return AppResources(
+        config=config,
+        extract_cache=extract_cache,
+        supabase_client_provider=supabase_client_provider,
+    )
 
 
-@app.middleware("http")
+@asynccontextmanager
+async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Initialize app-scoped resources once per app instance."""
+    app.state.invproc_resources = build_app_resources()
+    try:
+        yield
+    finally:
+        app.state.invproc_resources = None
+def get_pdf_processor(config: InvoiceConfig = Depends(get_app_config)) -> PDFProcessor:
+    """Get PDF processor instance (per-request)."""
+    return PDFProcessor(config)
+
+
+def get_llm_extractor(config: InvoiceConfig = Depends(get_app_config)) -> LLMExtractor:
+    """Get LLM extractor instance (per-request)."""
+    return LLMExtractor(config)
+
+
+def get_validator(config: InvoiceConfig = Depends(get_app_config)) -> InvoiceValidator:
+    """Get validator instance (per-request)."""
+    return InvoiceValidator(config)
+
+
+def get_import_service(
+    config: InvoiceConfig = Depends(get_app_config),
+) -> InvoiceImportService:
+    """Get invoice preview service instance."""
+    return InvoiceImportService(config=config)
+
+
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Attach debugging headers to all responses (including /health)."""
     response = await call_next(request)
@@ -135,7 +142,7 @@ async def add_observability_headers(request: Request, call_next):  # type: ignor
     return response
 
 
-@app.get("/health")
+@router.get("/health")
 @limiter.exempt
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint for container orchestration."""
@@ -146,7 +153,7 @@ async def health_check() -> Dict[str, Any]:
     }
 
 
-@app.post(
+@router.post(
     "/extract",
     response_model=InvoiceData,
     status_code=status.HTTP_200_OK,
@@ -166,11 +173,14 @@ async def extract_invoice(
     response: Response,
     file: UploadFile = File(..., description="Invoice PDF file"),
     user: dict[str, Any] = Depends(verify_supabase_jwt),
+    config: InvoiceConfig = Depends(get_app_config),
+    extract_cache: InMemoryExtractCache = Depends(get_extract_cache),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     llm_extractor: LLMExtractor = Depends(get_llm_extractor),
     validator: InvoiceValidator = Depends(get_validator),
 ) -> InvoiceData:
     """Extract structured data from uploaded invoice PDF."""
+    _ = request
     _ = user
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
@@ -178,7 +188,6 @@ async def extract_invoice(
             detail="Only PDF files are supported",
         )
 
-    config = get_config()
     temp_dir = config.output_dir / "tmp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename).name
@@ -234,7 +243,7 @@ async def extract_invoice(
             await run_in_threadpool(temp_pdf_path.unlink)
 
 
-@app.post(
+@router.post(
     "/invoice/preview-pricing",
     response_model=InvoicePreviewPricingResponse,
     status_code=status.HTTP_200_OK,
@@ -252,33 +261,68 @@ async def preview_invoice_pricing(
     import_service: InvoiceImportService = Depends(get_import_service),
 ) -> InvoicePreviewPricingResponse:
     """Compute canonical pricing preview for invoice rows."""
+    _ = request
     _ = user
     return await run_in_threadpool(import_service.preview_pricing, payload)
 
-@app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(
-    request: Request, exc: RateLimitExceeded
-) -> JSONResponse:
+
+async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
     """Rate limit exceeded handler."""
+    _ = request
+    _ = exc
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please try again later."},
     )
 
 
-@app.exception_handler(ContractError)
-async def contract_error_handler(request: Request, exc: ContractError) -> JSONResponse:
+async def contract_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Map domain contract errors to stable API error payload."""
+    _ = request
+    contract_error = cast(ContractError, exc)
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=contract_error.status_code,
         content={
             "error": {
-                "code": exc.code,
-                "message": exc.message,
-                "details": exc.details,
+                "code": contract_error.code,
+                "message": contract_error.message,
+                "details": contract_error.details,
             }
         },
     )
+
+
+def create_app() -> FastAPI:
+    """Create a configured FastAPI app instance."""
+    app = FastAPI(
+        title="Invoice Processing Service",
+        description="Extract structured data from invoice PDFs using AI",
+        version="1.0.0",
+        lifespan=app_lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_allowed_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Extract-Cache",
+            "X-Instance-Id",
+            "X-Process-Id",
+            "X-Extract-File-Hash",
+        ],
+    )
+
+    app.middleware("http")(add_observability_headers)
+    app.include_router(router)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.add_exception_handler(ContractError, contract_error_handler)
+    return app
+
+
+app = create_app()
 
 
 def main() -> None:

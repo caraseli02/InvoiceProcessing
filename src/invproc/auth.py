@@ -1,19 +1,17 @@
 """Supabase JWT authentication helpers for FastAPI endpoints."""
 
 import os
+from threading import Lock
 from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client, create_client
 
-from invproc.config import InvoiceConfig, get_config
+from invproc.config import InvoiceConfig
+from invproc.dependencies import get_app_config, get_supabase_client_provider
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
-_client: Optional[Client] = None
-_client_url: Optional[str] = None
-_client_key: Optional[str] = None
 
 
 def _get_api_keys() -> set[str]:
@@ -28,28 +26,36 @@ def _env_truthy(name: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def get_supabase_client(config: InvoiceConfig) -> Client:
-    """Create or reuse a Supabase client for server-side JWT verification."""
-    global _client
-    global _client_key
-    global _client_url
+class SupabaseClientProvider:
+    """App-scoped lazy Supabase client provider bound to startup config."""
 
-    if not config.supabase_url or not config.supabase_service_role_key:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication service is not configured",
-        )
+    def __init__(self, config: InvoiceConfig) -> None:
+        self._config = config
+        self._client: Optional[Client] = None
+        self._lock = Lock()
 
-    if (
-        _client is None
-        or _client_url != config.supabase_url
-        or _client_key != config.supabase_service_role_key
-    ):
-        _client = create_client(config.supabase_url, config.supabase_service_role_key)
-        _client_url = config.supabase_url
-        _client_key = config.supabase_service_role_key
+    def get_client(self) -> Client:
+        if not self._config.supabase_url or not self._config.supabase_service_role_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service is not configured",
+            )
 
-    return _client
+        if self._client is not None:
+            return self._client
+
+        with self._lock:
+            if self._client is None:
+                self._client = create_client(
+                    self._config.supabase_url,
+                    self._config.supabase_service_role_key,
+                )
+        return self._client
+def get_supabase_client(
+    provider: SupabaseClientProvider = Depends(get_supabase_client_provider),
+) -> Client:
+    """Resolve a Supabase client through the app-scoped provider."""
+    return provider.get_client()
 
 
 def fetch_supabase_user(token: str, client: Client) -> dict[str, Any]:
@@ -76,7 +82,8 @@ def fetch_supabase_user(token: str, client: Client) -> dict[str, Any]:
 
 async def verify_supabase_jwt(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    config: InvoiceConfig = Depends(get_config),
+    config: InvoiceConfig = Depends(get_app_config),
+    client: Client = Depends(get_supabase_client),
 ) -> dict[str, Any]:
     """Verify Bearer token with Supabase and return authenticated user payload."""
     if not credentials or credentials.scheme.lower() != "bearer":
@@ -91,7 +98,6 @@ async def verify_supabase_jwt(
     if _env_truthy("ALLOW_API_KEY_AUTH") and api_keys and token in api_keys:
         return {"id": "api-key-user", "auth": "api_key"}
 
-    client = get_supabase_client(config)
     try:
         return fetch_supabase_user(token, client)
     except HTTPException:
