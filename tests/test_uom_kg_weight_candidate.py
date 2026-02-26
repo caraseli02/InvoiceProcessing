@@ -1,7 +1,7 @@
 """Tests for KG-mode weight candidate behavior."""
 
-from invproc.api import _add_row_metadata
 from invproc.models import InvoiceData, Product
+from invproc.services.row_enrichment import add_row_metadata, normalize_kg_weighed_rows
 
 
 def test_add_row_metadata_prefers_cant_weight_for_kg_uom() -> None:
@@ -24,10 +24,8 @@ def test_add_row_metadata_prefers_cant_weight_for_kg_uom() -> None:
         ],
     )
 
-    from invproc.api import _normalize_kg_weighed_rows
-
-    _normalize_kg_weighed_rows(invoice)
-    _add_row_metadata(invoice)
+    normalize_kg_weighed_rows(invoice)
+    add_row_metadata(invoice)
 
     product = invoice.products[0]
     assert product.weight_kg_candidate == 0.878

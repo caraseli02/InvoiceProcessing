@@ -1,12 +1,10 @@
 """FastAPI application for invoice processing service."""
 
-import hashlib
-import json
 import logging
 import os
 from pathlib import Path
 import uuid
-from typing import Any, BinaryIO, Dict, cast
+from typing import Any, Dict, cast
 
 from fastapi import (
     Depends,
@@ -39,10 +37,10 @@ from invproc.models import (
     InvoicePreviewPricingResponse,
 )
 from invproc.pdf_processor import PDFProcessor
+from invproc.services.extract_service import run_extract_pipeline
+from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
-from invproc.weight_parser import parse_weight_candidate
 
-UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 logger = logging.getLogger(__name__)
 
 extract_cache = InMemoryExtractCache(ttl_sec=86400, max_entries=256)
@@ -95,60 +93,6 @@ def get_allowed_origins() -> list[str]:
         "http://localhost:5173,https://lavio.vercel.app",
     )
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
-
-
-def _save_upload_with_limit(
-    source: BinaryIO, destination: Path, max_file_size: int
-) -> tuple[int, str]:
-    """Stream upload to disk while enforcing max file size."""
-    source.seek(0)
-    total_bytes = 0
-    digest = hashlib.sha256()
-
-    with destination.open("wb") as output_file:
-        while True:
-            chunk = source.read(UPLOAD_CHUNK_SIZE)
-            if not chunk:
-                break
-
-            total_bytes += len(chunk)
-            if total_bytes > max_file_size:
-                raise HTTPException(
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    detail=(
-                        f"File too large: {total_bytes:,} bytes "
-                        f"(max {max_file_size:,} bytes)"
-                    ),
-                )
-
-            output_file.write(chunk)
-            digest.update(chunk)
-
-    return total_bytes, digest.hexdigest()
-
-
-def _build_extract_cache_signature(config: InvoiceConfig) -> str:
-    """Build a stable signature for extraction-affecting config fields."""
-    payload = {
-        "schema_version": 1,
-        "model": config.model,
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens,
-        "scale_factor": config.scale_factor,
-        "tolerance": config.tolerance,
-        "ocr_dpi": config.ocr_dpi,
-        "ocr_languages": config.ocr_languages,
-        "ocr_config": config.ocr_config,
-        "column_headers": config.column_headers.model_dump(mode="json"),
-        "mock": config.mock,
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _build_extract_cache_key(config: InvoiceConfig, file_hash: str) -> str:
-    """Build extract cache key for file bytes + effective extraction config."""
-    return f"{file_hash}:{_build_extract_cache_signature(config)}"
 
 
 # Initialize app and rate limiter
@@ -245,43 +189,25 @@ async def extract_invoice(
 
         # Stream upload to disk and enforce size limit by actual file bytes.
         _, file_hash = await run_in_threadpool(
-            _save_upload_with_limit, file.file, temp_pdf_path, max_file_size
+            save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
         if _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS"):
             response.headers["X-Extract-File-Hash"] = file_hash[:12]
 
-        if config.extract_cache_enabled:
-            extract_cache.configure(
-                ttl_sec=config.extract_cache_ttl_sec,
-                max_entries=config.extract_cache_max_entries,
-            )
-            cache_key = _build_extract_cache_key(config, file_hash)
-            cached_payload = extract_cache.get(cache_key)
-            if cached_payload is not None:
-                response.headers["X-Extract-Cache"] = "hit"
-                logger.info("extract cache hit: file_hash=%s", file_hash[:12])
-                return InvoiceData(**cached_payload)
-            response.headers["X-Extract-Cache"] = "miss"
-            logger.info("extract cache miss: file_hash=%s", file_hash[:12])
-        else:
-            response.headers["X-Extract-Cache"] = "off"
-
-        text_grid, _metadata = await run_in_threadpool(
-            pdf_processor.extract_content, temp_pdf_path
+        result = await run_in_threadpool(
+            run_extract_pipeline,
+            config=config,
+            pdf_path=temp_pdf_path,
+            file_hash=file_hash,
+            pdf_processor=pdf_processor,
+            llm_extractor=llm_extractor,
+            validator=validator,
+            cache=extract_cache,
         )
-        invoice_data = await run_in_threadpool(llm_extractor.parse_with_llm, text_grid)
-        _normalize_kg_weighed_rows(invoice_data)
-        validated_invoice = await run_in_threadpool(
-            validator.validate_invoice, invoice_data
-        )
-        _add_row_metadata(validated_invoice)
+        response.headers["X-Extract-Cache"] = result.cache_status
 
-        if config.extract_cache_enabled:
-            cache_key = _build_extract_cache_key(config, file_hash)
-            extract_cache.set(cache_key, validated_invoice.model_dump(mode="json"))
-
-        return cast(InvoiceData, validated_invoice)
+        return cast(InvoiceData, result.invoice_data)
 
     except HTTPException:
         raise
@@ -328,50 +254,6 @@ async def preview_invoice_pricing(
     """Compute canonical pricing preview for invoice rows."""
     _ = user
     return await run_in_threadpool(import_service.preview_pricing, payload)
-
-
-def _add_row_metadata(invoice_data: InvoiceData) -> None:
-    """Populate extracted rows with stable IDs and weight candidates."""
-    for idx, product in enumerate(invoice_data.products):
-        raw = (
-            f"{idx}|{product.raw_code or ''}|{product.name}|"
-            f"{product.quantity}|{product.total_price}"
-        )
-        row_hash = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
-        product.row_id = f"r_{row_hash}"
-
-        if (product.uom or "").strip().upper() == "KG" and product.weight_kg_candidate:
-            product.size_token = None
-            product.parse_confidence = None
-            continue
-
-        parsed = parse_weight_candidate(product.name)
-        product.weight_kg_candidate = parsed.weight_kg
-        product.size_token = parsed.size_token
-        product.parse_confidence = parsed.parse_confidence
-
-
-def _normalize_kg_weighed_rows(invoice_data: InvoiceData) -> None:
-    """
-    Normalize weighed KG rows to match invoice-import semantics.
-
-    For rows where `uom == "KG"`:
-    - Treat the extracted `quantity` as measured weight in kilograms (from "Cant.")
-    - Store that weight in `weight_kg_candidate`
-    - Rewrite `quantity` to 1 (one weighed item / line)
-    - Rewrite `unit_price` to `total_price` (VAT-inclusive end price per weighed item)
-    """
-    for product in invoice_data.products:
-        if (product.uom or "").strip().upper() != "KG":
-            continue
-
-        measured_weight_kg = product.quantity
-        product.weight_kg_candidate = measured_weight_kg
-        product.quantity = 1.0
-        product.unit_price = product.total_price
-        product.size_token = None
-        product.parse_confidence = None
-
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(
