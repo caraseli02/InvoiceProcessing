@@ -9,7 +9,7 @@ from io import BytesIO
 
 from fastapi.testclient import TestClient
 
-from invproc.api import app, limiter
+from invproc.api import limiter
 from invproc.pdf_processor import PDFProcessor
 from invproc.llm_extractor import LLMExtractor
 from invproc.config import get_config, reload_config
@@ -44,10 +44,9 @@ def llm_extractor():
 
 
 @pytest.fixture
-def api_client():
+def api_client(api_test_client: TestClient):
     """Create API test client."""
-    with TestClient(app) as client:
-        yield client
+    yield api_test_client
 
 
 def test_malformed_pdf_not_pdf(pdf_processor, tmp_path):

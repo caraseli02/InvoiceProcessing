@@ -276,13 +276,20 @@ class InvoiceConfig(BaseSettings):
 _config_instance = None
 
 
+def build_config(*, validate: bool = True) -> InvoiceConfig:
+    """Create a new configuration instance for an explicit lifecycle owner."""
+    config = InvoiceConfig()
+    if validate:
+        config.validate_config()
+        logger.info("Configuration validated successfully")
+    return config
+
+
 def get_config() -> InvoiceConfig:
     """Get or create global configuration instance."""
     global _config_instance
     if _config_instance is None:
-        _config_instance = InvoiceConfig()
-        _config_instance.validate_config()
-        logger.info("Configuration validated successfully")
+        _config_instance = build_config()
     return _config_instance
 
 
@@ -290,7 +297,7 @@ def get_config_unvalidated() -> InvoiceConfig:
     """Get or create global configuration instance without validation."""
     global _config_instance
     if _config_instance is None:
-        _config_instance = InvoiceConfig()
+        _config_instance = build_config(validate=False)
     return _config_instance
 
 

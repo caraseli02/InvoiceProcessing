@@ -5,25 +5,18 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from invproc.api import app
-from invproc.config import reload_config
-
-
 @pytest.fixture(autouse=True)
 def setup_test_config() -> None:
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
     os.environ["MOCK"] = "true"
-    reload_config()
     yield
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
-    reload_config()
 
 
 @pytest.fixture
-def client() -> TestClient:
-    with TestClient(app) as c:
-        yield c
+def client(api_test_client: TestClient) -> TestClient:
+    yield api_test_client
 
 
 def test_preview_pricing_handles_missing_weight(client: TestClient) -> None:

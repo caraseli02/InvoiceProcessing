@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from invproc.cli import app
-from invproc.api import app as api_app
+from invproc.api import create_app
 from invproc.config import reload_config
 
 cli_runner = CliRunner()
@@ -23,7 +23,7 @@ def test_cli_api_consistency():
         os.environ["MOCK"] = "true"
         reload_config()
 
-        with TestClient(api_app) as api_client:
+        with TestClient(create_app()) as api_client:
             with open("test_invoices/invoice-test.pdf", "rb") as f:
                 api_response = api_client.post(
                     "/extract",

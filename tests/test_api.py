@@ -6,8 +6,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from invproc.api import app, extract_cache, limiter
-from invproc.config import reload_config
+from invproc.api import limiter
+from invproc.config import InvoiceConfig
+from invproc.extract_cache import InMemoryExtractCache
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 
 
@@ -17,32 +18,21 @@ def setup_test_config():
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
     os.environ["MOCK"] = "true"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
-    os.environ["EXTRACT_CACHE_ENABLED"] = "false"
     os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "false"
-    os.environ["EXTRACT_CACHE_TTL_SEC"] = "3600"
-    os.environ["EXTRACT_CACHE_MAX_ENTRIES"] = "64"
     limiter.reset()
-    extract_cache.reset()
-    reload_config()
     yield
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
     os.environ.pop("MODEL", None)
-    os.environ.pop("EXTRACT_CACHE_ENABLED", None)
     os.environ.pop("EXTRACT_OBSERVABILITY_HEADERS", None)
-    os.environ.pop("EXTRACT_CACHE_TTL_SEC", None)
-    os.environ.pop("EXTRACT_CACHE_MAX_ENTRIES", None)
     limiter.reset()
-    extract_cache.reset()
-    reload_config()
 
 
 @pytest.fixture
-def client():
+def client(api_test_client: TestClient):
     """Create test client for each test."""
-    with TestClient(app) as c:
-        yield c
+    yield api_test_client
 
 
 def test_health_check(client):
@@ -186,11 +176,18 @@ def test_health_check_structure(client):
     assert "version" in data
 
 
-def test_extract_cache_hit_skips_second_llm_call(client):
+def test_extract_cache_hit_skips_second_llm_call(
+    client,
+    api_test_config: InvoiceConfig,
+    api_test_extract_cache: InMemoryExtractCache,
+):
     """Test identical file upload is served from cache on second request."""
-    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
+    api_test_config.extract_cache_enabled = True
+    api_test_extract_cache.configure(
+        ttl_sec=api_test_config.extract_cache_ttl_sec,
+        max_entries=api_test_config.extract_cache_max_entries,
+    )
     os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "true"
-    reload_config()
 
     call_count = 0
     original_parse = LLMExtractor.parse_with_llm
@@ -238,10 +235,17 @@ def test_extract_cache_header_off_when_disabled(client):
     assert response.headers.get("X-Process-Id") is None
 
 
-def test_extract_cache_config_change_forces_miss(client):
+def test_extract_cache_config_change_forces_miss(
+    client,
+    api_test_config: InvoiceConfig,
+    api_test_extract_cache: InMemoryExtractCache,
+):
     """Test config signature changes invalidate cached entry."""
-    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
-    reload_config()
+    api_test_config.extract_cache_enabled = True
+    api_test_extract_cache.configure(
+        ttl_sec=api_test_config.extract_cache_ttl_sec,
+        max_entries=api_test_config.extract_cache_max_entries,
+    )
 
     call_count = 0
     original_parse = LLMExtractor.parse_with_llm
@@ -261,8 +265,7 @@ def test_extract_cache_config_change_forces_miss(client):
         assert first.status_code == 200
         assert call_count == 1
 
-        os.environ["MODEL"] = "gpt-4o"
-        reload_config()
+        api_test_config.model = "gpt-4o"
         with open("test_invoices/invoice-test.pdf", "rb") as f:
             second = client.post(
                 "/extract",
@@ -275,10 +278,17 @@ def test_extract_cache_config_change_forces_miss(client):
     assert call_count == 2
 
 
-def test_extract_does_not_cache_422_errors(client):
+def test_extract_does_not_cache_422_errors(
+    client,
+    api_test_config: InvoiceConfig,
+    api_test_extract_cache: InMemoryExtractCache,
+):
     """Test malformed LLM output errors are not cached."""
-    os.environ["EXTRACT_CACHE_ENABLED"] = "true"
-    reload_config()
+    api_test_config.extract_cache_enabled = True
+    api_test_extract_cache.configure(
+        ttl_sec=api_test_config.extract_cache_ttl_sec,
+        max_entries=api_test_config.extract_cache_max_entries,
+    )
 
     call_count = 0
 
