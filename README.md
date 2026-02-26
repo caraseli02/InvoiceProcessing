@@ -372,6 +372,11 @@ curl -X POST "https://invoice-processing-api.onrender.com/extract" \
 
 **Note:** For always-on service, upgrade to paid plan ($7/month).
 
+
+## New to the project?
+
+Start with [`docs/newcomer-guide.md`](docs/newcomer-guide.md) for a practical walkthrough of architecture, data flow, and what to learn first.
+
 ## License
 
 MIT
