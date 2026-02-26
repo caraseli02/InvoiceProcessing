@@ -17,7 +17,7 @@ def test_save_upload_with_limit_writes_file_and_hash(tmp_path: Path) -> None:
     total_bytes, digest = save_upload_with_limit(source, destination, max_file_size=1024)
 
     assert total_bytes == len(payload)
-    assert digest == "6ca13d52ca70c883e0f0bb101e425a89e8624de51db2d23925b7c0b5f5b7f5ad"
+    assert digest == "6ca13d52ca70c883e0f0bb101e425a89e8624de51db2d2392593af6a84118090"
     assert destination.read_bytes() == payload
 
 

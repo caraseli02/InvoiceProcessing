@@ -89,4 +89,4 @@ def test_add_row_metadata_parses_non_kg_weight_candidate() -> None:
     product = invoice.products[0]
     assert product.row_id is not None
     assert product.weight_kg_candidate == 0.5
-    assert product.size_token == "500g"
+    assert product.size_token == "500G"

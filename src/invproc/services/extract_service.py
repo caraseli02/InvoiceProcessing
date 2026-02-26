@@ -64,8 +64,9 @@ def run_extract_pipeline(
     cache: InMemoryExtractCache,
 ) -> ExtractResult:
     """Execute extraction pipeline with optional cache lookup + write-through."""
-    cache_key = build_extract_cache_key(config, file_hash)
+    cache_key: str | None = None
     if config.extract_cache_enabled:
+        cache_key = build_extract_cache_key(config, file_hash)
         cache.configure(
             ttl_sec=config.extract_cache_ttl_sec,
             max_entries=config.extract_cache_max_entries,
@@ -89,6 +90,7 @@ def run_extract_pipeline(
     add_row_metadata(validated_invoice)
 
     if config.extract_cache_enabled:
+        assert cache_key is not None
         cache.set(cache_key, validated_invoice.model_dump(mode="json"))
 
     return ExtractResult(invoice_data=validated_invoice, cache_status=cache_status)
