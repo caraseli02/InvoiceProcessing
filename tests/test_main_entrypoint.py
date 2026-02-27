@@ -36,11 +36,12 @@ def test_main_api_mode_runs_uvicorn(monkeypatch):
     result = runner.invoke(main_module.app, ["--mode", "api"])
 
     assert result.exit_code == 0
-    assert calls["args"] == ("invproc.api:app",)
+    assert calls["args"] == ("invproc.api:create_app",)
     assert calls["kwargs"] == {
         "host": "127.0.0.1",
         "port": 9001,
         "reload": False,
+        "factory": True,
     }
 
 

@@ -29,10 +29,12 @@ Create a `.env` file in the project root:
 
 ```env
 OPENAI_API_KEY=sk-proj-...
+APP_ENV=local
 API_HOST=0.0.0.0
 API_PORT=8000
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+ALLOWED_ORIGINS=http://localhost:5173,https://lavio.vercel.app
 SCALE_FACTOR=0.2
 TOLERANCE=3
 OCR_DPI=150
@@ -43,6 +45,16 @@ LLM_TEMPERATURE=0
 ```
 
 See `.env.example` for all available options.
+
+### Production requirements
+
+When `APP_ENV=production`, startup config validation fails fast unless:
+
+- `ALLOWED_ORIGINS` is explicitly set (no fallback).
+- `ALLOW_API_KEY_AUTH` is unset/false.
+- Debug/observability headers are off unless explicitly allowed:
+  - set `EXTRACT_CACHE_DEBUG_HEADERS=false` and `EXTRACT_OBSERVABILITY_HEADERS=false`
+  - or set `ALLOW_PROD_DEBUG_HEADERS=true` (override)
 
 ## CLI Usage
 

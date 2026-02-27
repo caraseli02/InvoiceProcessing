@@ -49,8 +49,6 @@ from invproc.validator import InvoiceValidator
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-# Env parsing helpers
 def _env_truthy(name: str) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -77,18 +75,8 @@ limiter = Limiter(
 )
 
 
-def get_allowed_origins() -> list[str]:
-    """Get allowed CORS origins from environment."""
-    origins = os.getenv(
-        "ALLOWED_ORIGINS",
-        "http://localhost:5173,https://lavio.vercel.app",
-    )
-    return [origin.strip() for origin in origins.split(",") if origin.strip()]
-
-
-def build_app_resources() -> AppResources:
+def build_app_resources(config: InvoiceConfig) -> AppResources:
     """Create app-scoped resources for a FastAPI app instance."""
-    config = build_config()
     extract_cache = InMemoryExtractCache(
         ttl_sec=config.extract_cache_ttl_sec,
         max_entries=config.extract_cache_max_entries,
@@ -101,14 +89,6 @@ def build_app_resources() -> AppResources:
     )
 
 
-@asynccontextmanager
-async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize app-scoped resources once per app instance."""
-    app.state.invproc_resources = build_app_resources()
-    try:
-        yield
-    finally:
-        app.state.invproc_resources = None
 def get_pdf_processor(config: InvoiceConfig = Depends(get_app_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
     return PDFProcessor(config)
@@ -294,6 +274,18 @@ async def contract_error_handler(request: Request, exc: Exception) -> JSONRespon
 
 def create_app() -> FastAPI:
     """Create a configured FastAPI app instance."""
+    config = build_config()
+    resources = build_app_resources(config)
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Initialize app-scoped resources once per app instance."""
+        app.state.invproc_resources = resources
+        try:
+            yield
+        finally:
+            app.state.invproc_resources = None
+
     app = FastAPI(
         title="Invoice Processing Service",
         description="Extract structured data from invoice PDFs using AI",
@@ -303,7 +295,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=get_allowed_origins(),
+        allow_origins=config.cors_allowed_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -321,19 +313,16 @@ def create_app() -> FastAPI:
     app.add_exception_handler(ContractError, contract_error_handler)
     return app
 
-
-app = create_app()
-
-
 def main() -> None:
     """Run API server."""
     import uvicorn
 
     uvicorn.run(
-        "invproc.api:app",
+        "invproc.api:create_app",
         host="0.0.0.0",
         port=8000,
         reload=True,
+        factory=True,
     )
 
 

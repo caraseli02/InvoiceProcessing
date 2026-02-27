@@ -39,7 +39,8 @@ git push origin main
 | `OPENAI_API_KEY` | `sk-proj-...` | Yes |
 | `SUPABASE_URL` | `https://your-project-ref.supabase.co` | Yes |
 | `SUPABASE_SERVICE_ROLE_KEY` | `your-service-role-key` | Yes |
-| `ALLOWED_ORIGINS` | `https://yourdomain.com` | No |
+| `APP_ENV` | `production` | Yes |
+| `ALLOWED_ORIGINS` | `https://yourdomain.com` | Yes |
 | `SCALE_FACTOR` | `0.2` | No |
 | `TOLERANCE` | `3` | No |
 | `OCR_DPI` | `150` | No |
@@ -144,6 +145,7 @@ SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # Optional
+APP_ENV=production
 ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
 SCALE_FACTOR=0.2
 TOLERANCE=3

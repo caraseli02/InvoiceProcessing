@@ -27,10 +27,11 @@ def main(
 
         config = get_config()
         uvicorn.run(
-            "invproc.api:app",
+            "invproc.api:create_app",
             host=config.api_host,
             port=config.api_port,
             reload=False,
+            factory=True,
         )
         raise typer.Exit()
 
