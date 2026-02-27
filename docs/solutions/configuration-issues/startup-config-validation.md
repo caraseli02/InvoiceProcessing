@@ -693,3 +693,4 @@ allowed_currencies: str = Field(..., description="...")
 - Mock mode is fully supported and doesn't require API key validation
 - The validation is extensible - new validation rules can be added to `validate_config()` method
 - This aligns with 12-factor app principle: "Store config in the environment" and validate early
+- See also: `docs/solutions/security-issues/fail-fast-production-config-guards-system-20260227.md` (adds environment-mode security validation)
