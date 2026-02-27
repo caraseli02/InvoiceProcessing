@@ -185,7 +185,7 @@ Tune thread pool size for optimal performance:
 ```python
 # Consider for uvicorn startup
 uvicorn.run(
-    "invproc.api:app",
+    "invproc.api:create_app",
     workers=4,  # Match CPU cores
     limit_concurrency=100,  # Limit concurrent operations
     ...

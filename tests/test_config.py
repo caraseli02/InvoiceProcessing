@@ -130,3 +130,35 @@ def test_extract_cache_max_entries_validation():
     """Test extraction cache max entries validation."""
     with pytest.raises(ValueError, match="greater than or equal to 1"):
         InvoiceConfig(mock=True, extract_cache_max_entries=0)
+
+
+def test_validate_config_prod_missing_allowed_origins_fails(monkeypatch):
+    """Production must require explicit ALLOWED_ORIGINS (no fallback)."""
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    with pytest.raises(ValueError, match="ALLOWED_ORIGINS is required"):
+        config = InvoiceConfig(_env_file=None, app_env="production", mock=True)
+        config.validate_config()
+
+
+def test_validate_config_prod_api_key_auth_bypass_fails():
+    """Production must disallow ALLOW_API_KEY_AUTH bypass."""
+    with pytest.raises(ValueError, match="ALLOW_API_KEY_AUTH must be false in production"):
+        config = InvoiceConfig(
+            _env_file=None,
+            app_env="production",
+            allowed_origins="https://app.example.com",
+            allow_api_key_auth=True,
+            mock=True,
+        )
+        config.validate_config()
+
+
+def test_validate_config_local_allows_api_key_auth_bypass():
+    """Local dev may enable bypass toggles without failing validation."""
+    config = InvoiceConfig(
+        _env_file=None,
+        app_env="local",
+        allow_api_key_auth=True,
+        mock=True,
+    )
+    config.validate_config()

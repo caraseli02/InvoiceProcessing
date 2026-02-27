@@ -81,5 +81,4 @@ dev-key-12345
 
 ## Related Issues
 
-No related issues documented yet.
-
+- See also: `docs/solutions/security-issues/fail-fast-production-config-guards-system-20260227.md` (ensures `ALLOW_API_KEY_AUTH` cannot be enabled in production)

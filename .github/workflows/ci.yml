@@ -127,7 +127,7 @@ jobs:
           PYTHONPATH: src
           MOCK: "true"
         run: |
-          uvicorn invproc.api:app --host 127.0.0.1 --port 8000 > /tmp/invproc-api.log 2>&1 &
+          uvicorn invproc.api:create_app --factory --host 127.0.0.1 --port 8000 > /tmp/invproc-api.log 2>&1 &
           echo $! > /tmp/invproc-api.pid
 
       - name: Wait for /health and verify

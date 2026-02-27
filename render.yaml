@@ -21,10 +21,14 @@ services:
         value: 3.12
       
       # Configure these in Render dashboard:
+      # - APP_ENV=production (required for strict production validation)
       # - OPENAI_API_KEY (required)
       # - SUPABASE_URL (required)
       # - SUPABASE_SERVICE_ROLE_KEY (required)
-      # - ALLOWED_ORIGINS (optional, defaults to localhost domains + prod frontend)
+      # - ALLOWED_ORIGINS (required in production; no fallback when APP_ENV=production)
+
+      - key: APP_ENV
+        value: production
 
       - key: ALLOWED_ORIGINS
         value: http://localhost:5173,https://lavio.vercel.app

@@ -50,14 +50,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Env parsing helpers
-def _env_truthy(name: str) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # Used for debugging in multi-instance and/or multi-worker deployments.
 # Prefer a platform-provided stable id when available.
 INSTANCE_ID = (
@@ -77,18 +69,8 @@ limiter = Limiter(
 )
 
 
-def get_allowed_origins() -> list[str]:
-    """Get allowed CORS origins from environment."""
-    origins = os.getenv(
-        "ALLOWED_ORIGINS",
-        "http://localhost:5173,https://lavio.vercel.app",
-    )
-    return [origin.strip() for origin in origins.split(",") if origin.strip()]
-
-
-def build_app_resources() -> AppResources:
+def build_app_resources(config: InvoiceConfig) -> AppResources:
     """Create app-scoped resources for a FastAPI app instance."""
-    config = build_config()
     extract_cache = InMemoryExtractCache(
         ttl_sec=config.extract_cache_ttl_sec,
         max_entries=config.extract_cache_max_entries,
@@ -101,14 +83,6 @@ def build_app_resources() -> AppResources:
     )
 
 
-@asynccontextmanager
-async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize app-scoped resources once per app instance."""
-    app.state.invproc_resources = build_app_resources()
-    try:
-        yield
-    finally:
-        app.state.invproc_resources = None
 def get_pdf_processor(config: InvoiceConfig = Depends(get_app_config)) -> PDFProcessor:
     """Get PDF processor instance (per-request)."""
     return PDFProcessor(config)
@@ -134,8 +108,12 @@ def get_import_service(
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Attach debugging headers to all responses (including /health)."""
     response = await call_next(request)
-    debug_enabled = _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS")
-    observability_enabled = _env_truthy("EXTRACT_OBSERVABILITY_HEADERS") or debug_enabled
+    resources = getattr(request.app.state, "invproc_resources", None)
+    config = getattr(resources, "config", None)
+    debug_enabled = bool(getattr(config, "extract_cache_debug_headers", False))
+    observability_enabled = bool(
+        getattr(config, "extract_observability_headers", False) or debug_enabled
+    )
     if observability_enabled:
         response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
         response.headers.setdefault("X-Process-Id", str(os.getpid()))
@@ -201,7 +179,7 @@ async def extract_invoice(
             save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
-        if _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS"):
+        if config.extract_cache_debug_headers:
             response.headers["X-Extract-File-Hash"] = file_hash[:12]
 
         result = await run_in_threadpool(
@@ -292,8 +270,26 @@ async def contract_error_handler(request: Request, exc: Exception) -> JSONRespon
     )
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    resources: AppResources | None = None,
+) -> FastAPI:
     """Create a configured FastAPI app instance."""
+    if resources is None:
+        config = build_config()
+        resources = build_app_resources(config)
+    else:
+        config = resources.config
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Initialize app-scoped resources once per app instance."""
+        app.state.invproc_resources = resources
+        try:
+            yield
+        finally:
+            app.state.invproc_resources = None
+
     app = FastAPI(
         title="Invoice Processing Service",
         description="Extract structured data from invoice PDFs using AI",
@@ -303,7 +299,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=get_allowed_origins(),
+        allow_origins=config.cors_allowed_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -321,19 +317,16 @@ def create_app() -> FastAPI:
     app.add_exception_handler(ContractError, contract_error_handler)
     return app
 
-
-app = create_app()
-
-
 def main() -> None:
     """Run API server."""
     import uvicorn
 
     uvicorn.run(
-        "invproc.api:app",
+        "invproc.api:create_app",
         host="0.0.0.0",
         port=8000,
         reload=True,
+        factory=True,
     )
 
 

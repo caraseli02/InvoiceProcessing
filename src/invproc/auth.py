@@ -19,13 +19,6 @@ def _get_api_keys() -> set[str]:
     return {k.strip() for k in keys_raw.split(",") if k.strip()}
 
 
-def _env_truthy(name: str) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 class SupabaseClientProvider:
     """App-scoped lazy Supabase client provider bound to startup config."""
 
@@ -95,7 +88,7 @@ async def verify_supabase_jwt(
     token = credentials.credentials
 
     api_keys = _get_api_keys()
-    if _env_truthy("ALLOW_API_KEY_AUTH") and api_keys and token in api_keys:
+    if config.allow_api_key_auth and api_keys and token in api_keys:
         return {"id": "api-key-user", "auth": "api_key"}
 
     try:

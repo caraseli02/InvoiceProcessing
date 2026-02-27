@@ -2,13 +2,18 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 import pycountry
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DEV_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "https://lavio.vercel.app",
+]
 
 
 class ColumnHeadersConfig(BaseModel):
@@ -43,6 +48,36 @@ class InvoiceConfig(BaseSettings):
     mock: bool = Field(
         default=False,
         description="Use mock data instead of calling OpenAI API (for testing without API key)",
+    )
+
+    app_env: Literal["local", "production"] = Field(
+        default="local",
+        description="Application environment mode (local|production). Production enables strict security validation.",
+    )
+
+    allowed_origins: Optional[str] = Field(
+        default=None,
+        description="CORS allowlist (comma-separated origins). Required when APP_ENV=production.",
+    )
+
+    allow_api_key_auth: bool = Field(
+        default=False,
+        description="Allow API key auth bypass (dev-only). Must be false in production.",
+    )
+
+    extract_cache_debug_headers: bool = Field(
+        default=False,
+        description="Enable debug headers for extract/cache (dev-only by default).",
+    )
+
+    extract_observability_headers: bool = Field(
+        default=False,
+        description="Enable observability headers (instance/process identifiers).",
+    )
+
+    allow_prod_debug_headers: bool = Field(
+        default=False,
+        description="Allow debug/observability headers in production when explicitly enabled.",
     )
 
     model: str = Field(default="gpt-4o-mini", description="Default OpenAI model to use")
@@ -225,6 +260,16 @@ class InvoiceConfig(BaseSettings):
 
         return currencies
 
+    def cors_allowed_origins(self) -> list[str]:
+        """Return the CORS allowlist for the current environment."""
+        if self.allowed_origins is None:
+            if self.app_env == "production":
+                return []
+            return list(_DEFAULT_DEV_ALLOWED_ORIGINS)
+
+        origins = [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+        return origins
+
     def validate_config(self) -> None:
         """Validate configuration at startup. Raises ValueError if invalid."""
         errors = []
@@ -264,6 +309,32 @@ class InvoiceConfig(BaseSettings):
 
         if self.extract_cache_max_entries < 1:
             errors.append("EXTRACT_CACHE_MAX_ENTRIES must be >= 1")
+
+        if self.app_env == "production":
+            if not self.allowed_origins or not self.allowed_origins.strip():
+                errors.append(
+                    "ALLOWED_ORIGINS is required when APP_ENV=production (no fallback)"
+                )
+            else:
+                origins = self.cors_allowed_origins()
+                if not origins:
+                    errors.append(
+                        "ALLOWED_ORIGINS is required when APP_ENV=production (no fallback)"
+                    )
+                if any(o.strip() == "*" for o in origins):
+                    errors.append("ALLOWED_ORIGINS must not include '*' in production")
+
+            if self.allow_api_key_auth:
+                errors.append("ALLOW_API_KEY_AUTH must be false in production")
+
+            debug_enabled = (
+                self.extract_cache_debug_headers or self.extract_observability_headers
+            )
+            if debug_enabled and not self.allow_prod_debug_headers:
+                errors.append(
+                    "EXTRACT_CACHE_DEBUG_HEADERS / EXTRACT_OBSERVABILITY_HEADERS are not allowed in production "
+                    "unless ALLOW_PROD_DEBUG_HEADERS=true"
+                )
 
         # Raise error if any validation failed
         if errors:
