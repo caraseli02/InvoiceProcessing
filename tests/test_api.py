@@ -183,11 +183,11 @@ def test_extract_cache_hit_skips_second_llm_call(
 ):
     """Test identical file upload is served from cache on second request."""
     api_test_config.extract_cache_enabled = True
+    api_test_config.extract_observability_headers = True
     api_test_extract_cache.configure(
         ttl_sec=api_test_config.extract_cache_ttl_sec,
         max_entries=api_test_config.extract_cache_max_entries,
     )
-    os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "true"
 
     call_count = 0
     original_parse = LLMExtractor.parse_with_llm

@@ -8,9 +8,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from invproc.api import create_app
-from invproc.auth import get_supabase_client
+from invproc.auth import SupabaseClientProvider, get_supabase_client
 from invproc.config import InvoiceConfig
-from invproc.dependencies import get_app_config, get_extract_cache
+from invproc.dependencies import AppResources, get_app_config, get_extract_cache
 from invproc.extract_cache import InMemoryExtractCache
 
 TEST_SUPABASE_TOKEN = "test-supabase-jwt"
@@ -69,7 +69,12 @@ def api_test_app(
     """Create a fresh FastAPI app with explicit dependency overrides."""
     monkeypatch.setenv("MOCK", "true")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost:5173")
-    app = create_app()
+    resources = AppResources(
+        config=api_test_config,
+        extract_cache=api_test_extract_cache,
+        supabase_client_provider=SupabaseClientProvider(api_test_config),
+    )
+    app = create_app(resources=resources)
     app.dependency_overrides[get_app_config] = lambda: api_test_config
     app.dependency_overrides[get_extract_cache] = lambda: api_test_extract_cache
     app.dependency_overrides[get_supabase_client] = lambda: object()

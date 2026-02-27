@@ -49,12 +49,6 @@ from invproc.validator import InvoiceValidator
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-def _env_truthy(name: str) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
 # Prefer a platform-provided stable id when available.
@@ -114,8 +108,12 @@ def get_import_service(
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Attach debugging headers to all responses (including /health)."""
     response = await call_next(request)
-    debug_enabled = _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS")
-    observability_enabled = _env_truthy("EXTRACT_OBSERVABILITY_HEADERS") or debug_enabled
+    resources = getattr(request.app.state, "invproc_resources", None)
+    config = getattr(resources, "config", None)
+    debug_enabled = bool(getattr(config, "extract_cache_debug_headers", False))
+    observability_enabled = bool(
+        getattr(config, "extract_observability_headers", False) or debug_enabled
+    )
     if observability_enabled:
         response.headers.setdefault("X-Instance-Id", INSTANCE_ID)
         response.headers.setdefault("X-Process-Id", str(os.getpid()))
@@ -181,7 +179,7 @@ async def extract_invoice(
             save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
-        if _env_truthy("EXTRACT_CACHE_DEBUG_HEADERS"):
+        if config.extract_cache_debug_headers:
             response.headers["X-Extract-File-Hash"] = file_hash[:12]
 
         result = await run_in_threadpool(
@@ -272,10 +270,16 @@ async def contract_error_handler(request: Request, exc: Exception) -> JSONRespon
     )
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    resources: AppResources | None = None,
+) -> FastAPI:
     """Create a configured FastAPI app instance."""
-    config = build_config()
-    resources = build_app_resources(config)
+    if resources is None:
+        config = build_config()
+        resources = build_app_resources(config)
+    else:
+        config = resources.config
 
     @asynccontextmanager
     async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
