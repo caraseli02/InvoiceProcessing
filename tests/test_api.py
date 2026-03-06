@@ -235,6 +235,27 @@ def test_extract_cache_header_off_when_disabled(client):
     assert response.headers.get("X-Process-Id") is None
 
 
+def test_extract_debug_headers_include_file_hash_and_observability_ids(
+    client,
+    api_test_config: InvoiceConfig,
+):
+    """Debug headers should expose file hash and observability identifiers."""
+    api_test_config.extract_cache_debug_headers = True
+
+    with open("test_invoices/invoice-test.pdf", "rb") as f:
+        response = client.post(
+            "/extract",
+            files={"file": ("test.pdf", f, "application/pdf")},
+            headers={"Authorization": "Bearer test-supabase-jwt"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers.get("X-Extract-Cache") == "off"
+    assert response.headers.get("X-Extract-File-Hash")
+    assert response.headers.get("X-Instance-Id")
+    assert response.headers.get("X-Process-Id")
+
+
 def test_extract_cache_config_change_forces_miss(
     client,
     api_test_config: InvoiceConfig,

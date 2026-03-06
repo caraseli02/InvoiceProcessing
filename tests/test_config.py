@@ -162,3 +162,66 @@ def test_validate_config_local_allows_api_key_auth_bypass():
         mock=True,
     )
     config.validate_config()
+
+
+def test_cors_allowed_origins_uses_dev_defaults_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Local mode should fall back to the built-in dev CORS allowlist."""
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    config = InvoiceConfig(_env_file=None, app_env="local", mock=True)
+    assert config.cors_allowed_origins() == [
+        "http://localhost:5173",
+        "https://lavio.vercel.app",
+    ]
+
+
+def test_cors_allowed_origins_parses_explicit_csv():
+    """Explicit allowlist values should be trimmed and preserved."""
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        allowed_origins=" https://app.example.com , http://localhost:3000 ",
+    )
+    assert config.cors_allowed_origins() == [
+        "https://app.example.com",
+        "http://localhost:3000",
+    ]
+
+
+def test_validate_config_prod_disallows_debug_headers_without_override():
+    """Production must reject debug headers unless explicitly overridden."""
+    with pytest.raises(ValueError, match="ALLOW_PROD_DEBUG_HEADERS=true"):
+        config = InvoiceConfig(
+            _env_file=None,
+            app_env="production",
+            allowed_origins="https://app.example.com",
+            extract_cache_debug_headers=True,
+            mock=True,
+        )
+        config.validate_config()
+
+
+def test_validate_config_prod_allows_debug_headers_with_override():
+    """Production may expose debug headers only behind the explicit override."""
+    config = InvoiceConfig(
+        _env_file=None,
+        app_env="production",
+        allowed_origins="https://app.example.com",
+        extract_observability_headers=True,
+        allow_prod_debug_headers=True,
+        mock=True,
+    )
+    config.validate_config()
+
+
+def test_validate_config_prod_disallows_wildcard_origins():
+    """Production must reject wildcard CORS origins."""
+    with pytest.raises(ValueError, match="must not include '\\*'"):
+        config = InvoiceConfig(
+            _env_file=None,
+            app_env="production",
+            allowed_origins="*",
+            mock=True,
+        )
+        config.validate_config()
