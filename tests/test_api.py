@@ -18,14 +18,12 @@ def setup_test_config():
     os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
     os.environ["MOCK"] = "true"
     os.environ["MAX_PDF_SIZE_MB"] = "2"
-    os.environ["EXTRACT_OBSERVABILITY_HEADERS"] = "false"
     limiter.reset()
     yield
     os.environ.pop("ALLOWED_ORIGINS", None)
     os.environ.pop("MOCK", None)
     os.environ.pop("MAX_PDF_SIZE_MB", None)
     os.environ.pop("MODEL", None)
-    os.environ.pop("EXTRACT_OBSERVABILITY_HEADERS", None)
     limiter.reset()
 
 
@@ -254,6 +252,21 @@ def test_extract_debug_headers_include_file_hash_and_observability_ids(
     assert response.headers.get("X-Extract-File-Hash")
     assert response.headers.get("X-Instance-Id")
     assert response.headers.get("X-Process-Id")
+
+
+def test_observability_headers_ignore_env_drift_after_app_creation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime headers should follow startup-owned config, not later env changes."""
+    monkeypatch.setenv("EXTRACT_OBSERVABILITY_HEADERS", "true")
+    monkeypatch.setenv("EXTRACT_CACHE_DEBUG_HEADERS", "true")
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.headers.get("X-Instance-Id") is None
+    assert response.headers.get("X-Process-Id") is None
 
 
 def test_extract_cache_config_change_forces_miss(

@@ -57,6 +57,27 @@ def test_preview_pricing_handles_missing_weight(client: TestClient) -> None:
     assert data["rows"][1]["messages"] == ["MISSING_WEIGHT"]
 
 
+def test_preview_pricing_without_auth_returns_401(client: TestClient) -> None:
+    response = client.post(
+        "/invoice/preview-pricing",
+        json={
+            "invoice_meta": {"supplier": "JLC", "invoice_number": "INV-NO-AUTH"},
+            "rows": [
+                {
+                    "row_id": "r-no-auth",
+                    "name": "200G UNT CIOCOLATA JLC",
+                    "barcode": None,
+                    "quantity": 2,
+                    "line_total_lei": 40.0,
+                    "weight_kg": 0.2,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 401
+
+
 def test_preview_pricing_returns_liquid_warning(client: TestClient) -> None:
     response = client.post(
         "/invoice/preview-pricing",

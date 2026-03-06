@@ -29,9 +29,6 @@ services:
 
       - key: APP_ENV
         value: production
-
-      - key: ALLOWED_ORIGINS
-        value: http://localhost:5173,https://lavio.vercel.app
       
       - key: ALLOWED_CURRENCIES
         value: EUR,USD,MDL,RUB,RON
