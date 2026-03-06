@@ -88,6 +88,7 @@ curl -X POST "https://invoice-processing-api.onrender.com/extract" \
 
 - [ ] Add Supabase auth environment variables
 - [ ] Set `ALLOWED_ORIGINS` to your frontend domains
+- [ ] Do not include `http://localhost:*` origins in production
 - [ ] Test with real invoice PDFs
 - [ ] Monitor logs in Render dashboard
 - [ ] Set up error alerts (Render notifies you)
@@ -143,10 +144,10 @@ If you need always-on or faster processing:
 OPENAI_API_KEY=sk-proj-...
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-# Optional
 APP_ENV=production
 ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+
+# Optional
 SCALE_FACTOR=0.2
 TOLERANCE=3
 OCR_DPI=150
@@ -179,3 +180,7 @@ This deployment flow is aligned with strict CI policy in `docs/quality-gates.md`
 - baseline checks (`ruff`, `mypy`, `pytest` + coverage >= 80%, `/health` smoke)
 - change-type policy (`change:feature`, `change:refactor`, `change:deploy`)
 - required deploy evidence in PR body for `change:deploy`
+
+## Blueprint Note
+
+`render.yaml` intentionally does not set `ALLOWED_ORIGINS`. With `APP_ENV=production`, startup validation will fail until you add a real production allowlist in the Render dashboard. This prevents accidental deployment with `localhost` origins.
