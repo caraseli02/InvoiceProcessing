@@ -5,7 +5,13 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from invproc.repositories.base import InvoiceImportRepository, ProductRecord, UpsertProductInput
+from invproc.repositories.base import (
+    InvoiceImportRepository,
+    ProductRecord,
+    ProductSyncRecord,
+    ProductSyncRecordInput,
+    UpsertProductInput,
+)
 
 
 class InMemoryInvoiceImportRepository(InvoiceImportRepository):
@@ -22,8 +28,10 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
             self._products_by_barcode: dict[str, str] = {}
             self._movements: dict[str, dict] = {}
             self._idempotency: dict[str, tuple[str, dict]] = {}
+            self._product_sync: dict[tuple[str, str], ProductSyncRecord] = {}
             self._product_seq = 1
             self._movement_seq = 1
+            self._sync_seq = 1
 
     def find_product_by_barcode(self, barcode: str) -> Optional[ProductRecord]:
         with self._lock:
@@ -104,3 +112,42 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
     ) -> None:
         with self._lock:
             self._idempotency[idempotency_key] = (request_hash, response_payload)
+
+    def create_or_reuse_product_sync(
+        self, data: ProductSyncRecordInput
+    ) -> tuple[ProductSyncRecord, bool]:
+        with self._lock:
+            key = (data.product_id, data.product_snapshot_hash)
+            existing = self._product_sync.get(key)
+            if existing is not None:
+                return existing, False
+
+            record = ProductSyncRecord(
+                id=f"sync_{self._sync_seq}",
+                product_id=data.product_id,
+                product_snapshot_hash=data.product_snapshot_hash,
+                embedding_model=data.embedding_model,
+                name=data.name,
+                barcode=data.barcode,
+                category=data.category,
+                uom=data.uom,
+                supplier=data.supplier,
+                price_eur=data.price_eur,
+                price_50=data.price_50,
+                price_70=data.price_70,
+                price_100=data.price_100,
+                markup=data.markup,
+                source_import_id=data.source_import_id,
+                source_row_id=data.source_row_id,
+                invoice_number=data.invoice_number,
+                sync_status=data.sync_status,
+                attempt_count=data.attempt_count,
+            )
+            self._sync_seq += 1
+            self._product_sync[key] = record
+            return record, True
+
+    def list_product_sync_records(self) -> list[ProductSyncRecord]:
+        """Return sync rows in insertion order for tests."""
+        with self._lock:
+            return sorted(self._product_sync.values(), key=lambda record: record.id)

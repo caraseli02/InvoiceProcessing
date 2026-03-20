@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, cast
 
 from fastapi import Depends, HTTPException, Request, status
 
+from invproc.catalog_sync import CatalogSyncProducer
 from invproc.config import InvoiceConfig
 from invproc.extract_cache import InMemoryExtractCache
+from invproc.repositories.base import InvoiceImportRepository
 
 if TYPE_CHECKING:
     from invproc.auth import SupabaseClientProvider
@@ -21,6 +23,8 @@ class AppResources:
     config: InvoiceConfig
     extract_cache: InMemoryExtractCache
     supabase_client_provider: SupabaseClientProvider
+    import_repository: InvoiceImportRepository
+    catalog_sync_producer: CatalogSyncProducer
 
 
 def get_app_resources(request: Request) -> AppResources:
@@ -51,3 +55,17 @@ def get_supabase_client_provider(
 ) -> "SupabaseClientProvider":
     """Get app-scoped Supabase client provider."""
     return resources.supabase_client_provider
+
+
+def get_catalog_sync_producer(
+    resources: AppResources = Depends(get_app_resources),
+) -> CatalogSyncProducer:
+    """Get app-scoped catalog sync producer."""
+    return resources.catalog_sync_producer
+
+
+def get_import_repository(
+    resources: AppResources = Depends(get_app_resources),
+) -> InvoiceImportRepository:
+    """Get app-scoped import repository."""
+    return resources.import_repository

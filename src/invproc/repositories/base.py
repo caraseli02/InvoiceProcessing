@@ -29,6 +29,55 @@ class UpsertProductInput:
     markup: int
 
 
+@dataclass(frozen=True)
+class ProductSyncRecordInput:
+    """Input payload for durable catalog sync rows."""
+
+    product_id: str
+    product_snapshot_hash: str
+    embedding_model: str
+    name: str
+    barcode: Optional[str]
+    category: Optional[str]
+    uom: Optional[str]
+    supplier: Optional[str]
+    price_eur: Optional[float]
+    price_50: Optional[float]
+    price_70: Optional[float]
+    price_100: Optional[float]
+    markup: Optional[int]
+    source_import_id: str
+    source_row_id: str
+    invoice_number: Optional[str]
+    sync_status: str
+    attempt_count: int
+
+
+@dataclass(frozen=True)
+class ProductSyncRecord:
+    """Persisted catalog sync row."""
+
+    id: str
+    product_id: str
+    product_snapshot_hash: str
+    embedding_model: str
+    name: str
+    barcode: Optional[str]
+    category: Optional[str]
+    uom: Optional[str]
+    supplier: Optional[str]
+    price_eur: Optional[float]
+    price_50: Optional[float]
+    price_70: Optional[float]
+    price_100: Optional[float]
+    markup: Optional[int]
+    source_import_id: str
+    source_row_id: str
+    invoice_number: Optional[str]
+    sync_status: str
+    attempt_count: int
+
+
 class InvoiceImportRepository(Protocol):
     """Persistence operations required for invoice import."""
 
@@ -60,4 +109,9 @@ class InvoiceImportRepository(Protocol):
     def save_idempotent_result(
         self, *, idempotency_key: str, request_hash: str, response_payload: dict
     ) -> None:
+        ...
+
+    def create_or_reuse_product_sync(
+        self, data: ProductSyncRecordInput
+    ) -> tuple[ProductSyncRecord, bool]:
         ...

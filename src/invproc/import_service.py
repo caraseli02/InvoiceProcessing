@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
+from invproc.catalog_sync import (
+    CatalogSyncContext,
+    CatalogSyncProducer,
+    NoopCatalogSyncProducer,
+)
 from invproc.config import InvoiceConfig
 from invproc.exceptions import ContractError
 from invproc.models import (
@@ -26,6 +32,8 @@ from invproc.models import (
 )
 from invproc.pricing import compute_pricing
 from invproc.repositories.base import InvoiceImportRepository, ProductRecord, UpsertProductInput
+
+logger = logging.getLogger(__name__)
 
 
 _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -55,9 +63,11 @@ class InvoiceImportService:
         self,
         config: InvoiceConfig,
         repository: Optional[InvoiceImportRepository] = None,
+        catalog_sync_producer: CatalogSyncProducer | None = None,
     ) -> None:
         self.config = config
         self.repository = repository
+        self.catalog_sync_producer = catalog_sync_producer or NoopCatalogSyncProducer()
 
     @staticmethod
     def _map_pricing_error(exc: ValueError) -> str:
@@ -211,6 +221,7 @@ class InvoiceImportService:
         updated_count = 0
         stock_in_count = 0
         error_count = 0
+        import_id = datetime.now(timezone.utc).strftime("imp_%Y%m%d_%H%M%S")
 
         for row in payload.rows:
             if row.weight_kg is None:
@@ -291,6 +302,24 @@ class InvoiceImportService:
             )
             stock_in_count += 1
 
+            try:
+                self.catalog_sync_producer.emit_product_sync(
+                    product=product,
+                    upsert_input=upsert_data,
+                    context=CatalogSyncContext(
+                        import_id=import_id,
+                        source_row_id=row.row_id,
+                        invoice_number=payload.invoice_meta.invoice_number,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Catalog sync emission failed for import_id=%s row_id=%s product_id=%s",
+                    import_id,
+                    row.row_id,
+                    product.product_id,
+                )
+
             rows.append(
                 ImportRowResult(
                     row_id=row.row_id,
@@ -311,7 +340,6 @@ class InvoiceImportService:
         elif error_count > 0:
             import_status = "partial_failed"
 
-        import_id = datetime.now(timezone.utc).strftime("imp_%Y%m%d_%H%M%S")
         response = InvoiceImportResponse(
             import_id=import_id,
             import_status=import_status,
