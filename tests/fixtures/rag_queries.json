@@ -1,0 +1,12 @@
+{
+  "queries": [
+    {
+      "query": "need greek yogurt for metro order",
+      "expected_product_id": "prod_yogurt"
+    },
+    {
+      "query": "please add orange juice carton",
+      "expected_product_id": "prod_juice"
+    }
+  ]
+}

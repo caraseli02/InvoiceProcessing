@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from invproc.repositories.base import (
     InvoiceImportRepository,
+    ProductCatalogEmbeddingRecord,
+    ProductCatalogEmbeddingRecordInput,
     ProductRecord,
     ProductSyncRecord,
     ProductSyncRecordInput,
@@ -29,9 +32,14 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
             self._movements: dict[str, dict] = {}
             self._idempotency: dict[str, tuple[str, dict]] = {}
             self._product_sync: dict[tuple[str, str], ProductSyncRecord] = {}
+            self._product_sync_by_id: dict[str, ProductSyncRecord] = {}
+            self._product_catalog_embeddings: dict[
+                tuple[str, str, str], ProductCatalogEmbeddingRecord
+            ] = {}
             self._product_seq = 1
             self._movement_seq = 1
             self._sync_seq = 1
+            self._embedding_seq = 1
 
     def find_product_by_barcode(self, barcode: str) -> Optional[ProductRecord]:
         with self._lock:
@@ -122,6 +130,7 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
             if existing is not None:
                 return existing, False
 
+            now = datetime.now(timezone.utc)
             record = ProductSyncRecord(
                 id=f"sync_{self._sync_seq}",
                 product_id=data.product_id,
@@ -142,12 +151,226 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
                 invoice_number=data.invoice_number,
                 sync_status=data.sync_status,
                 attempt_count=data.attempt_count,
+                last_error=data.last_error,
+                claimed_at=data.claimed_at,
+                claimed_by=data.claimed_by,
+                next_retry_at=data.next_retry_at,
+                last_synced_at=data.last_synced_at,
+                created_at=now,
+                updated_at=now,
             )
             self._sync_seq += 1
             self._product_sync[key] = record
+            self._product_sync_by_id[record.id] = record
             return record, True
+
+    def claim_next_product_sync(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_timeout: timedelta,
+    ) -> Optional[ProductSyncRecord]:
+        with self._lock:
+            candidates: list[ProductSyncRecord] = []
+            lease_cutoff = now - lease_timeout
+            for record in self._product_sync_by_id.values():
+                if record.sync_status == "pending":
+                    candidates.append(record)
+                    continue
+                if record.sync_status == "failed" and (
+                    record.next_retry_at is None or record.next_retry_at <= now
+                ):
+                    candidates.append(record)
+                    continue
+                if record.sync_status == "processing" and (
+                    record.claimed_at is not None and record.claimed_at <= lease_cutoff
+                ):
+                    candidates.append(record)
+
+            if not candidates:
+                return None
+
+            record = min(candidates, key=lambda candidate: candidate.created_at)
+            claimed = ProductSyncRecord(
+                id=record.id,
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                name=record.name,
+                barcode=record.barcode,
+                category=record.category,
+                uom=record.uom,
+                supplier=record.supplier,
+                price_eur=record.price_eur,
+                price_50=record.price_50,
+                price_70=record.price_70,
+                price_100=record.price_100,
+                markup=record.markup,
+                source_import_id=record.source_import_id,
+                source_row_id=record.source_row_id,
+                invoice_number=record.invoice_number,
+                sync_status="processing",
+                attempt_count=record.attempt_count,
+                last_error=record.last_error,
+                claimed_at=now,
+                claimed_by=worker_id,
+                next_retry_at=record.next_retry_at,
+                last_synced_at=record.last_synced_at,
+                created_at=record.created_at,
+                updated_at=now,
+            )
+            self._replace_sync_record(claimed)
+            return claimed
+
+    def mark_product_sync_synced(
+        self,
+        *,
+        sync_id: str,
+        synced_at: datetime,
+    ) -> ProductSyncRecord:
+        with self._lock:
+            record = self._require_product_sync(sync_id)
+            synced = ProductSyncRecord(
+                id=record.id,
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                name=record.name,
+                barcode=record.barcode,
+                category=record.category,
+                uom=record.uom,
+                supplier=record.supplier,
+                price_eur=record.price_eur,
+                price_50=record.price_50,
+                price_70=record.price_70,
+                price_100=record.price_100,
+                markup=record.markup,
+                source_import_id=record.source_import_id,
+                source_row_id=record.source_row_id,
+                invoice_number=record.invoice_number,
+                sync_status="synced",
+                attempt_count=record.attempt_count,
+                last_error=None,
+                claimed_at=record.claimed_at,
+                claimed_by=record.claimed_by,
+                next_retry_at=None,
+                last_synced_at=synced_at,
+                created_at=record.created_at,
+                updated_at=synced_at,
+            )
+            self._replace_sync_record(synced)
+            return synced
+
+    def mark_product_sync_failed(
+        self,
+        *,
+        sync_id: str,
+        failed_at: datetime,
+        last_error: str,
+        next_retry_at: datetime,
+    ) -> ProductSyncRecord:
+        with self._lock:
+            record = self._require_product_sync(sync_id)
+            failed = ProductSyncRecord(
+                id=record.id,
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                name=record.name,
+                barcode=record.barcode,
+                category=record.category,
+                uom=record.uom,
+                supplier=record.supplier,
+                price_eur=record.price_eur,
+                price_50=record.price_50,
+                price_70=record.price_70,
+                price_100=record.price_100,
+                markup=record.markup,
+                source_import_id=record.source_import_id,
+                source_row_id=record.source_row_id,
+                invoice_number=record.invoice_number,
+                sync_status="failed",
+                attempt_count=record.attempt_count + 1,
+                last_error=last_error,
+                claimed_at=record.claimed_at,
+                claimed_by=record.claimed_by,
+                next_retry_at=next_retry_at,
+                last_synced_at=record.last_synced_at,
+                created_at=record.created_at,
+                updated_at=failed_at,
+            )
+            self._replace_sync_record(failed)
+            return failed
+
+    def get_product_sync(self, sync_id: str) -> Optional[ProductSyncRecord]:
+        with self._lock:
+            return self._product_sync_by_id.get(sync_id)
+
+    def upsert_product_catalog_embedding(
+        self, data: ProductCatalogEmbeddingRecordInput
+    ) -> ProductCatalogEmbeddingRecord:
+        with self._lock:
+            key = (data.product_id, data.product_snapshot_hash, data.embedding_model)
+            existing = self._product_catalog_embeddings.get(key)
+            now = datetime.now(timezone.utc)
+            if existing is not None:
+                updated = ProductCatalogEmbeddingRecord(
+                    id=existing.id,
+                    product_id=existing.product_id,
+                    product_snapshot_hash=existing.product_snapshot_hash,
+                    embedding_model=existing.embedding_model,
+                    embedding_text=data.embedding_text,
+                    embedding=list(data.embedding),
+                    metadata=dict(data.metadata),
+                    created_at=existing.created_at,
+                    updated_at=now,
+                )
+                self._product_catalog_embeddings[key] = updated
+                return updated
+
+            record = ProductCatalogEmbeddingRecord(
+                id=f"embed_{self._embedding_seq}",
+                product_id=data.product_id,
+                product_snapshot_hash=data.product_snapshot_hash,
+                embedding_model=data.embedding_model,
+                embedding_text=data.embedding_text,
+                embedding=list(data.embedding),
+                metadata=dict(data.metadata),
+                created_at=now,
+                updated_at=now,
+            )
+            self._embedding_seq += 1
+            self._product_catalog_embeddings[key] = record
+            return record
+
+    def list_product_catalog_embeddings(
+        self,
+        *,
+        embedding_model: Optional[str] = None,
+    ) -> list[ProductCatalogEmbeddingRecord]:
+        with self._lock:
+            records = list(self._product_catalog_embeddings.values())
+            if embedding_model is not None:
+                records = [
+                    record
+                    for record in records
+                    if record.embedding_model == embedding_model
+                ]
+            return sorted(records, key=lambda record: record.created_at)
 
     def list_product_sync_records(self) -> list[ProductSyncRecord]:
         """Return sync rows in insertion order for tests."""
         with self._lock:
             return sorted(self._product_sync.values(), key=lambda record: record.id)
+
+    def _require_product_sync(self, sync_id: str) -> ProductSyncRecord:
+        record = self._product_sync_by_id.get(sync_id)
+        if record is None:
+            raise KeyError(f"Unknown sync_id: {sync_id}")
+        return record
+
+    def _replace_sync_record(self, record: ProductSyncRecord) -> None:
+        key = (record.product_id, record.product_snapshot_hash)
+        self._product_sync[key] = record
+        self._product_sync_by_id[record.id] = record
