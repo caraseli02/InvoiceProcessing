@@ -13,6 +13,20 @@ from rich.progress import track
 from .config import get_config_unvalidated, reload_config, InvoiceConfig
 from .pdf_processor import PDFProcessor
 from .llm_extractor import LLMExtractor
+from .api import build_app_resources
+from .dependencies import AppResources
+from .rag import (
+    CatalogRagEvaluator,
+    CatalogRetrievalService,
+    CatalogSyncWorker,
+    build_rag_worker,
+    build_retrieval_service,
+    build_sync_status_snapshot,
+    load_eval_cases,
+    serialize_eval_result,
+    serialize_query_result,
+    serialize_sync_status_snapshot,
+)
 from .validator import InvoiceValidator
 from .models import InvoiceData
 
@@ -37,11 +51,15 @@ app = typer.Typer(
     """,
     no_args_is_help=True,
 )
+rag_app = typer.Typer(help="Backend-owned RAG sync, query, and evaluation commands.")
+app.add_typer(rag_app, name="rag")
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_CLI_RAG_RESOURCES: AppResources | None = None
+_CLI_RAG_RESOURCES_KEY: tuple[bool, str] | None = None
 
 
 @app.command()
@@ -231,6 +249,114 @@ def _check_consistency(results: list[InvoiceData]) -> None:
 def version() -> None:
     """Show version information."""
     console.print("invproc version 0.1.0")
+
+
+def _get_cli_rag_resources(*, mock: bool) -> AppResources:
+    global _CLI_RAG_RESOURCES
+    global _CLI_RAG_RESOURCES_KEY
+
+    config = get_config_unvalidated()
+    config.mock = mock
+    config.validate_config()
+    cache_key = (config.mock, config.catalog_sync_embedding_model)
+
+    if _CLI_RAG_RESOURCES is None or _CLI_RAG_RESOURCES_KEY != cache_key:
+        _CLI_RAG_RESOURCES = build_app_resources(config)
+        _CLI_RAG_RESOURCES_KEY = cache_key
+
+    return _CLI_RAG_RESOURCES
+
+
+def _build_rag_services(
+    *,
+    mock: bool,
+) -> tuple[AppResources, CatalogSyncWorker, CatalogRetrievalService]:
+    resources = _get_cli_rag_resources(mock=mock)
+    worker = build_rag_worker(
+        repository=resources.import_repository,
+        config=resources.config,
+        worker_id="cli",
+    )
+    retrieval_service = build_retrieval_service(
+        repository=resources.import_repository,
+        config=resources.config,
+    )
+    return resources, worker, retrieval_service
+
+
+@rag_app.command("sync-pending")
+def rag_sync_pending(
+    limit: int = typer.Option(100, "--limit", min=1, help="Maximum rows to process."),
+    mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use deterministic offline embeddings instead of OpenAI API calls.",
+    ),
+) -> None:
+    """Process pending or retry-due catalog sync rows."""
+    _, worker, _ = _build_rag_services(mock=mock)
+    results = worker.sync_pending(limit=limit)
+    print(
+        json.dumps(
+            {
+                "processed": len(results),
+                "results": [result.__dict__ for result in results],
+            },
+            indent=2,
+        )
+    )
+
+
+@rag_app.command("query")
+def rag_query(
+    text: str = typer.Argument(..., help="Semantic catalog query."),
+    top_k: int = typer.Option(5, "--top-k", min=1, help="Number of matches to return."),
+    mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use deterministic offline embeddings instead of OpenAI API calls.",
+    ),
+) -> None:
+    """Query backend-owned catalog embeddings."""
+    _, _, retrieval_service = _build_rag_services(mock=mock)
+    result = retrieval_service.query(text, top_k=top_k)
+    print(json.dumps(serialize_query_result(result), indent=2))
+
+
+@rag_app.command("eval")
+def rag_eval(
+    fixture_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="JSON fixture containing representative RAG queries.",
+    ),
+    mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use deterministic offline embeddings instead of OpenAI API calls.",
+    ),
+) -> None:
+    """Evaluate retrieval quality with representative WhatsApp-style queries."""
+    _, _, retrieval_service = _build_rag_services(mock=mock)
+    evaluator = CatalogRagEvaluator(retrieval_service)
+    result = evaluator.evaluate(load_eval_cases(fixture_path))
+    print(json.dumps(serialize_eval_result(result), indent=2))
+
+
+@rag_app.command("status")
+def rag_status(
+    mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use the mock-configured CLI app resources.",
+    ),
+) -> None:
+    """Show backend sync queue status for operational validation."""
+    resources = _get_cli_rag_resources(mock=mock)
+    snapshot = build_sync_status_snapshot(resources.import_repository)
+    print(json.dumps(serialize_sync_status_snapshot(snapshot), indent=2))
 
 
 if __name__ == "__main__":

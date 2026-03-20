@@ -1,7 +1,10 @@
 """Repository interfaces for invoice import persistence."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from datetime import datetime, timedelta
+from typing import Any, Optional, Protocol
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,11 @@ class ProductSyncRecordInput:
     invoice_number: Optional[str]
     sync_status: str
     attempt_count: int
+    last_error: Optional[str] = None
+    claimed_at: Optional[datetime] = None
+    claimed_by: Optional[str] = None
+    next_retry_at: Optional[datetime] = None
+    last_synced_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,40 @@ class ProductSyncRecord:
     invoice_number: Optional[str]
     sync_status: str
     attempt_count: int
+    last_error: Optional[str]
+    claimed_at: Optional[datetime]
+    claimed_by: Optional[str]
+    next_retry_at: Optional[datetime]
+    last_synced_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ProductCatalogEmbeddingRecordInput:
+    """Input payload for durable product catalog embeddings."""
+
+    product_id: str
+    product_snapshot_hash: str
+    embedding_model: str
+    embedding_text: str
+    embedding: list[float]
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProductCatalogEmbeddingRecord:
+    """Persisted product catalog embedding row."""
+
+    id: str
+    product_id: str
+    product_snapshot_hash: str
+    embedding_model: str
+    embedding_text: str
+    embedding: list[float]
+    metadata: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
 
 
 class InvoiceImportRepository(Protocol):
@@ -114,4 +156,49 @@ class InvoiceImportRepository(Protocol):
     def create_or_reuse_product_sync(
         self, data: ProductSyncRecordInput
     ) -> tuple[ProductSyncRecord, bool]:
+        ...
+
+    def claim_next_product_sync(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_timeout: timedelta,
+    ) -> Optional[ProductSyncRecord]:
+        ...
+
+    def mark_product_sync_synced(
+        self,
+        *,
+        sync_id: str,
+        synced_at: datetime,
+    ) -> ProductSyncRecord:
+        ...
+
+    def mark_product_sync_failed(
+        self,
+        *,
+        sync_id: str,
+        failed_at: datetime,
+        last_error: str,
+        next_retry_at: datetime,
+    ) -> ProductSyncRecord:
+        ...
+
+    def get_product_sync(self, sync_id: str) -> Optional[ProductSyncRecord]:
+        ...
+
+    def list_product_sync_records(self) -> list[ProductSyncRecord]:
+        ...
+
+    def upsert_product_catalog_embedding(
+        self, data: ProductCatalogEmbeddingRecordInput
+    ) -> ProductCatalogEmbeddingRecord:
+        ...
+
+    def list_product_catalog_embeddings(
+        self,
+        *,
+        embedding_model: Optional[str] = None,
+    ) -> list[ProductCatalogEmbeddingRecord]:
         ...

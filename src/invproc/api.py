@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from openai import APITimeoutError
 from slowapi import Limiter
@@ -53,6 +54,15 @@ from invproc.models import (
     InvoicePreviewPricingResponse,
 )
 from invproc.pdf_processor import PDFProcessor
+from invproc.rag import (
+    CatalogRetrievalService,
+    CatalogSyncWorker,
+    build_rag_worker,
+    build_retrieval_service,
+    build_sync_status_snapshot,
+    serialize_query_result,
+    serialize_sync_status_snapshot,
+)
 from invproc.services.extract_service import run_extract_pipeline
 from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
@@ -61,6 +71,13 @@ from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class CatalogQueryRequest(BaseModel):
+    """Request payload for backend catalog semantic lookup."""
+
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
@@ -132,6 +149,26 @@ def get_import_service(
         repository=repository,
         catalog_sync_producer=catalog_sync_producer,
     )
+
+
+def get_rag_worker(
+    config: InvoiceConfig = Depends(get_app_config),
+    repository: InvoiceImportRepository = Depends(get_import_repository),
+) -> CatalogSyncWorker:
+    """Get backend RAG sync worker bound to app resources."""
+    return build_rag_worker(
+        repository=repository,
+        config=config,
+        worker_id=f"api-{INSTANCE_ID}",
+    )
+
+
+def get_rag_retrieval_service(
+    config: InvoiceConfig = Depends(get_app_config),
+    repository: InvoiceImportRepository = Depends(get_import_repository),
+) -> CatalogRetrievalService:
+    """Get backend RAG retrieval service bound to app resources."""
+    return build_retrieval_service(repository=repository, config=config)
 
 
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -271,6 +308,66 @@ async def preview_invoice_pricing(
     _ = request
     _ = user
     return await run_in_threadpool(import_service.preview_pricing, payload)
+
+
+@router.post(
+    "/internal/rag/sync-pending",
+    status_code=status.HTTP_200_OK,
+    responses={401: {"description": "Invalid or expired token"}},
+)
+async def sync_pending_catalog_embeddings(
+    request: Request,
+    limit: int = 100,
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    worker: CatalogSyncWorker = Depends(get_rag_worker),
+) -> dict[str, Any]:
+    """Process pending backend RAG sync rows using app-owned resources."""
+    _ = request
+    _ = user
+    results = await run_in_threadpool(worker.sync_pending, limit=limit)
+    return {
+        "processed": len(results),
+        "results": [result.__dict__ for result in results],
+    }
+
+
+@router.post(
+    "/internal/rag/query",
+    status_code=status.HTTP_200_OK,
+    responses={401: {"description": "Invalid or expired token"}},
+)
+async def query_catalog_embeddings(
+    request: Request,
+    payload: CatalogQueryRequest,
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    retrieval_service: CatalogRetrievalService = Depends(get_rag_retrieval_service),
+) -> dict[str, Any]:
+    """Query backend-owned catalog embeddings through the app resource graph."""
+    _ = request
+    _ = user
+    result = await run_in_threadpool(
+        retrieval_service.query,
+        payload.query,
+        top_k=payload.top_k,
+    )
+    return serialize_query_result(result)
+
+
+@router.get(
+    "/internal/rag/status",
+    status_code=status.HTTP_200_OK,
+    responses={401: {"description": "Invalid or expired token"}},
+)
+async def rag_status(
+    request: Request,
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    repository: InvoiceImportRepository = Depends(get_import_repository),
+) -> dict[str, Any]:
+    """Inspect backend RAG sync queue state through the app resource graph."""
+    _ = request
+    _ = user
+    snapshot = await run_in_threadpool(build_sync_status_snapshot, repository)
+    return serialize_sync_status_snapshot(snapshot)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:

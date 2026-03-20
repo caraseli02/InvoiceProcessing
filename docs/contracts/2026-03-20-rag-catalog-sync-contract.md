@@ -1,29 +1,34 @@
-# RAG Catalog Sync Contract (Phase 1)
+# RAG Catalog Sync Contract
 
 Date: 2026-03-20
-Status: locked for Phase 1
-Related plan: `docs/plans/2026-03-20-001-feat-rag-whatsapp-catalog-sync-plan.md`
+Status: updated for Phase 3 backend-owned RAG
+Related plans:
+- `docs/plans/2026-03-20-001-feat-rag-whatsapp-catalog-sync-plan.md`
+- `docs/plans/2026-03-20-002-feat-rag-whatsapp-catalog-sync-phase-3-backend-rag-plan.md`
 Origin: `docs/brainstorms/2026-03-13-rag-whatsapp-orders-agent-evaluation.md`
 
 ## Purpose
 
-Lock the cross-repo contract for catalog-to-RAG freshness before any producer or consumer code is added.
+Lock the backend-owned contract for catalog freshness, embedding generation, vector persistence, retrieval, and evaluation before React integration.
 
 This document is the source of truth for:
 
 - when sync work is created
-- what `invproc` is responsible for
-- what the WhatsApp agent stack is responsible for
+- what `invproc` is responsible for end to end in Phase 3
+- what the React WhatsApp app is responsible for later
 - which fields define a unique product snapshot
-- how retryable sync state is represented in Supabase
+- how retryable sync state and vector rows are represented
+- which backend-only retrieval surfaces validate RAG quality before frontend integration
 
-## Phase 1 Decisions
+## Current Decisions
 
-1. Default transport is a durable Supabase sync table, not a webhook.
-2. The trigger point is successful product persistence inside `InvoiceImportService.import_rows()`.
+1. Durable sync rows in Supabase remain the freshness trigger and replay source.
+2. The trigger point remains successful product persistence inside `InvoiceImportService.import_rows()`.
 3. Sync metadata stays out of public extraction/import response schemas.
-4. `invproc` produces freshness intents only; embedding generation, vector writes, and retrieval stay in the agent stack.
-5. Deduplication is based on `product_id + product_snapshot_hash`.
+4. `invproc` now owns the consumer side of the pipeline: claim loop, embeddings, vector writes, retries, retrieval, and evaluation.
+5. The React WhatsApp app is a downstream consumer only; it does not own embeddings, vector writes, retry workers, or retrieval jobs.
+6. Deduplication remains based on `product_id + product_snapshot_hash`.
+7. Vector rows are uniquely keyed by `product_id + product_snapshot_hash + embedding_model`.
 
 ## Ownership Boundary
 
@@ -32,24 +37,28 @@ This document is the source of truth for:
 - deciding whether a product change happened after a successful import write
 - assembling the canonical snapshot payload for that persisted product version
 - computing a deterministic snapshot hash
-- writing a durable sync row with retry-visible status
-- preserving import behavior if downstream embedding infrastructure is unavailable
-
-### WhatsApp/agent repo owns
-
-- claiming pending sync rows
-- generating embeddings
-- writing or updating vector rows
+- writing a durable sync row
+- claiming claimable sync rows atomically
+- generating embeddings with the stored `embedding_model`
+- upserting vector rows into `product_catalog_embeddings`
 - marking sync rows as `processing`, `synced`, or `failed`
-- lease expiry, retry backoff, and reconciliation jobs
-- query embedding, top-K retrieval, prompt grounding, and fallback behavior
+- lease expiry, retry backoff, replay safety, and worker crash recovery
+- embedding user queries with the same model as catalog vectors
+- semantic retrieval, top-K selection, and explicit miss behavior
+- backend-only evaluation harnesses and retrieval quality reporting
 
-### Explicit non-goals for `invproc`
+### React WhatsApp app owns
 
-- no embedding API calls
-- no pgvector similarity queries
-- no WhatsApp prompt assembly
-- no query-time ranking logic
+- calling a backend retrieval surface or future chat API
+- presenting grounded matches to end users
+- conversation orchestration and UI behavior once backend RAG is validated
+
+### Explicit non-goals for React
+
+- no embedding API calls from the frontend
+- no pgvector writes from the frontend
+- no retry workers or claim loops in the frontend
+- no ownership of vector freshness or replay logic
 
 ## Trigger Contract
 
@@ -102,7 +111,7 @@ The producer writes one logical product snapshot payload per persisted product v
 
 ### Canonical embedding text
 
-V1 embedding text is assembled by the consumer from these fields, omitting null or empty values:
+V1 embedding text is assembled by the backend consumer from these fields, omitting null or empty values:
 
 ```text
 {name} {barcode} {category} {uom}
@@ -111,8 +120,8 @@ V1 embedding text is assembled by the consumer from these fields, omitting null 
 Notes:
 
 - `name` is the only always-required semantic field.
-- `barcode`, `category`, and `uom` are optional in V1; the consumer must skip missing values instead of inserting placeholders.
-- `supplier` and price fields are persisted for filtering, replay, or future prompt formatting, but are not part of the default V1 embedding text.
+- `barcode`, `category`, and `uom` are optional in V1; missing values are skipped.
+- `supplier` and price fields are persisted for metadata, filtering, and future rendering, but are not part of the default V1 embedding text.
 
 ## Snapshot Hash Contract
 
@@ -120,7 +129,7 @@ The snapshot hash must be deterministic and stable across retries.
 
 ### Hash input fields
 
-The Phase 1 contract defines the hash input as normalized JSON over:
+The hash input is normalized JSON over:
 
 - `product_id`
 - `name`
@@ -148,43 +157,51 @@ The Phase 1 contract defines the hash input as normalized JSON over:
 Allowed states:
 
 - `pending`: durable intent exists and is available for claiming
-- `processing`: a worker has claimed the row
-- `synced`: embeddings or vector write completed for that exact snapshot
+- `processing`: a worker has claimed the row and holds a lease
+- `synced`: embeddings and vector write completed for that exact snapshot
 - `failed`: the last attempt failed and the row is eligible for retry or inspection
 
 ### Transitions
 
 - `pending -> processing`
+- `failed -> processing` when retry is due
 - `processing -> synced`
 - `processing -> failed`
-- `failed -> pending` for retry
+- `processing -> processing` when an expired lease is reclaimed by another worker
 
 Workers must never delete sync rows as part of normal processing.
 
-## Retry and Claim Semantics
+## Claim, Lease, and Retry Semantics
 
 ### Claim contract
 
-- Worker claims must be row-based and atomic.
-- A claim records `claimed_at` and `claimed_by`.
-- Rows stuck in `processing` become reclaimable after a lease timeout chosen by the consumer implementation.
+- Claiming is row-based and atomic.
+- Workers may claim rows in `pending`.
+- Workers may also reclaim rows in `failed` when `next_retry_at <= now()`.
+- Workers may reclaim rows in `processing` when the existing lease has expired.
+- Each claim updates `sync_status = processing`, `claimed_at`, `claimed_by`, and `updated_at`.
+
+### Lease contract
+
+- `processing` rows carry lease metadata in `claimed_at` and `claimed_by`.
+- Lease expiry is implementation-configurable, but the default Phase 3 worker assumes a 10-minute timeout.
+- A crashed worker must not block progress forever; expired `processing` rows become claimable again.
 
 ### Retry contract
 
 - Every failed attempt increments `attempt_count`.
 - Failures record a human-readable `last_error`.
-- Retry scheduling uses `next_retry_at`.
+- Retry scheduling uses bounded backoff written to `next_retry_at`.
 - Retrying a row must not create a new logical snapshot row.
+- Successful completion clears any stale error state and stamps `last_synced_at`.
 
-## Proposed Supabase Schema
+## Storage Contract
 
-This section defines the Phase 1 storage contract. It is intentionally schema-first and code-agnostic.
-
-### Producer-owned table: `product_embedding_sync`
+### Sync table: `product_embedding_sync`
 
 | Column | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `id` | uuid | yes | primary key |
+| `id` | uuid/text | yes | primary key |
 | `product_id` | text | yes | stable product identity from product persistence |
 | `product_snapshot_hash` | text | yes | dedupe key for product version |
 | `embedding_model` | text | yes | required for model parity |
@@ -209,7 +226,7 @@ This section defines the Phase 1 storage contract. It is intentionally schema-fi
 | `next_retry_at` | timestamptz | no | retry scheduling |
 | `last_synced_at` | timestamptz | no | success timestamp |
 | `created_at` | timestamptz | yes | defaults to now |
-| `updated_at` | timestamptz | yes | maintained on write or update |
+| `updated_at` | timestamptz | yes | maintained on every state change |
 
 Constraints and indexes:
 
@@ -220,17 +237,17 @@ Constraints and indexes:
 - check constraint limiting `sync_status` to the four allowed values
 - check constraint ensuring `attempt_count >= 0`
 
-### Consumer-owned table: `product_catalog_embeddings`
+### Vector table: `product_catalog_embeddings`
 
 | Column | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `id` | uuid | yes | primary key |
+| `id` | uuid/text | yes | primary key |
 | `product_id` | text | yes | stable product identity |
 | `product_snapshot_hash` | text | yes | joins back to sync snapshot |
 | `embedding_model` | text | yes | must match query model |
 | `embedding_text` | text | yes | exact text used for embedding |
-| `embedding` | vector | yes | exact dimension set by consumer migration for chosen model |
-| `metadata` | jsonb | yes | product fields used for retrieval or rendering |
+| `embedding` | vector/float array | yes | embedding payload for similarity search |
+| `metadata` | json/jsonb | yes | product fields used for retrieval or rendering |
 | `created_at` | timestamptz | yes | defaults to now |
 | `updated_at` | timestamptz | yes | maintained on write or update |
 
@@ -240,17 +257,59 @@ Constraints and indexes:
 - vector index deferred until scale or latency requires it
 - btree index on `product_id, updated_at desc`
 
-## Worker Contract
+## Backend Worker Contract
 
-The consumer processes `product_embedding_sync` rows under this handshake:
+The backend worker processes `product_embedding_sync` rows under this handshake:
 
-1. Select a claimable row in `pending` state or a retryable `failed` row whose `next_retry_at` is due.
-2. Atomically move it to `processing` and stamp claim metadata.
+1. Claim one eligible row from `pending`, retry-due `failed`, or expired-lease `processing`.
+2. Atomically move it to `processing` and stamp lease metadata.
 3. Build `embedding_text` from the row payload.
-4. Generate embedding using the same `embedding_model` stored on the row.
+4. Generate an embedding using the row's `embedding_model`.
 5. Upsert into `product_catalog_embeddings` using `product_id + product_snapshot_hash + embedding_model`.
-6. Mark the sync row `synced` and stamp `last_synced_at`.
+6. Mark the sync row `synced`, stamp `last_synced_at`, and preserve the same logical row id.
 7. On failure, mark the row `failed`, increment `attempt_count`, preserve `last_error`, and compute `next_retry_at`.
+
+All worker writes must be idempotent across retries.
+
+## Retrieval Contract
+
+Phase 3 retrieval lives in `invproc` and exists to validate the catalog RAG path before frontend integration.
+
+### Query contract
+
+- Embed the user query with the same `embedding_model` used for the target catalog vectors.
+- Use cosine similarity as the safe default for V1.
+- Start with top `5`.
+- Return an explicit backend result shape containing:
+  - the query text
+  - the embedding model
+  - the top matches with score/similarity metadata
+  - enough product metadata for later React rendering
+  - an explicit empty-result shape when there is no confident match
+
+### Retrieval guarantees
+
+- Query and catalog embeddings must use the same model identifier.
+- Retrieval misses must remain explicit and inspectable.
+- Retrieval quality is validated in this repo before any React dependency is introduced.
+
+## Backend Validation Surfaces
+
+At least the following backend-owned validation flow should be supported in Phase 3:
+
+- a worker execution surface for processing pending sync rows
+- a query surface for semantic catalog lookup
+- an evaluation harness for representative WhatsApp-style product queries
+
+Representative examples:
+
+```text
+python -m invproc rag sync-pending
+python -m invproc rag query "metro yogurt"
+python -m invproc rag eval tests/fixtures/rag_queries.json
+```
+
+Equivalent API surfaces may exist for manual testing, but CLI and service-level validation are the primary requirement.
 
 ## Replay and Reconciliation
 
@@ -258,13 +317,36 @@ The contract must support these operations without special-case code:
 
 - replay all failed rows for a time window
 - replay all rows for one `product_id`
-- verify that each latest product snapshot has either a `pending`, `processing`, or `synced` sync row
-- detect vectors whose snapshot hash no longer matches the latest synced product version
+- resume after worker crash without creating duplicate vectors
+- re-run evaluation against a stable query fixture set
 
-## Open Items Deferred Beyond Phase 1
+## Operational Visibility
 
-- exact lease timeout duration
-- exact retry backoff schedule
-- whether category or uom become guaranteed producer fields in Phase 2
-- tombstone or delete handling if product deletion is introduced later
-- vector index choice and threshold or top-K tuning
+Phase 3 must make the following states visible to operators:
+
+- count of `pending`, `processing`, `failed`, and `synced` rows
+- age of oldest claimable and processing rows
+- repeated failures for the same snapshot or model
+- top-1 and top-5 evaluation results for representative catalog queries
+
+Healthy signals:
+
+- pending backlog drains after imports
+- processing rows are short-lived
+- most rows sync on the first attempt
+- imported products become searchable within the freshness window
+
+Failure signals:
+
+- processing rows older than the lease timeout
+- repeated failures for the same worker or model
+- imported products missing from top-5 retrieval results
+
+## Scope Boundary
+
+This contract intentionally does not define:
+
+- WhatsApp conversation orchestration
+- frontend rendering details
+- hybrid retrieval or reranking
+- product delete/tombstone handling

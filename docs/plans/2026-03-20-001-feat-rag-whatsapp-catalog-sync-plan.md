@@ -184,14 +184,17 @@ Estimated effort:
 
 - 1-2 days
 
-#### Phase 3: Add consumer and vector refresh path in agent stack
+#### Phase 3: Add backend RAG consumer and vector refresh path in `invproc`
 
 Deliverables:
 
-- build sync consumer in the agent repo or Supabase Edge Function
+- build sync consumer in `invproc` or a backend worker owned by this repo
 - create/update vector rows keyed by product identity + snapshot hash
 - support retries and visibility for failed embeddings
 - define worker claim/retry semantics so multiple workers cannot process the same row indefinitely
+- add a retrieval surface in this repo for backend-only RAG testing before React integration
+- add an evaluation harness for representative WhatsApp-style catalog queries
+- execution handoff captured in `docs/plans/2026-03-20-002-feat-rag-whatsapp-catalog-sync-phase-3-backend-rag-plan.md`
 
 Success criteria:
 
@@ -199,6 +202,7 @@ Success criteria:
 - unchanged products are skipped
 - failed embedding jobs can be retried without data corruption
 - worker can be re-run safely after crashes or partial failures
+- retrieval can be tested directly in this repo without depending on the React app
 
 Estimated effort:
 
@@ -229,16 +233,17 @@ Estimated effort:
 Ship this in a deliberately narrow order:
 
 1. **Schema + producer only** — record sync intents, but do not yet block on consumer readiness.
-2. **Consumer + exact semantic retrieval** — prove freshness and basic relevance first.
-3. **Evaluation tuning** — tune threshold/top-K with real WhatsApp phrases.
-4. **Hybrid retrieval if needed** — add keyword/SKU fusion only if evaluation shows semantic-only misses.
-5. **Indexing/scale work** — add vector indexes and retrieval optimizations when catalog size or latency justifies them.
+2. **Backend consumer + exact semantic retrieval** — prove freshness and basic relevance first in this repo.
+3. **Evaluation tuning** — tune threshold/top-K with real WhatsApp phrases before wiring React.
+4. **React integration** — connect the webapp only after retrieval quality is good enough.
+5. **Hybrid retrieval if needed** — add keyword/SKU fusion only if evaluation shows semantic-only misses.
+6. **Indexing/scale work** — add vector indexes and retrieval optimizations when catalog size or latency justifies them.
 
 ## Alternative Approaches Considered
 
-### Put the full RAG pipeline in this repo
+### Put the full backend RAG pipeline in this repo
 
-Rejected because this service is an extraction/import backend, not the conversation runtime. Pulling query embedding and retrieval here would blur service ownership and fight existing layering and DI conventions.
+Accepted after architecture clarification. The separate WhatsApp app is a React webapp, not a durable worker or trusted backend runtime. Embedding generation, vector writes, retries, and retrieval evaluation therefore belong in backend infrastructure. Keeping those concerns in `invproc` (or a backend worker owned by this repo) preserves operational reliability, keeps secrets out of the browser, and allows RAG quality to be validated before any frontend integration.
 
 ### Trigger embeddings from `/extract`
 
