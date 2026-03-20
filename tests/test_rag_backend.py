@@ -12,10 +12,15 @@ from typer.testing import CliRunner
 
 from invproc.api import build_app_resources, create_app
 from invproc.catalog_sync import build_product_snapshot_hash
-from invproc.cli import _get_cli_rag_resources, app
+from invproc import cli as cli_module
+from invproc.cli import (
+    _build_import_request_from_invoice,
+    _get_cli_rag_resources,
+    app,
+)
 from invproc.config import InvoiceConfig
 from invproc.import_service import InvoiceImportService
-from invproc.models import InvoiceImportRequest
+from invproc.models import InvoiceData, InvoiceImportRequest, Product
 from invproc.rag import (
     CatalogEvalCase,
     CatalogRagEvaluator,
@@ -28,6 +33,24 @@ from invproc.repositories.base import ProductRecord, ProductSyncRecordInput, Ups
 from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 runner = CliRunner()
+
+
+def configure_cli_for_memory_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CLI tests isolated from ambient backend configuration."""
+    cli_module._CLI_RAG_RESOURCES = None
+    cli_module._CLI_RAG_RESOURCES_KEY = None
+
+    def fake_get_config() -> InvoiceConfig:
+        return InvoiceConfig(
+            _env_file=None,
+            mock=True,
+            catalog_sync_enabled=True,
+            import_repository_backend="memory",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+        )
+
+    monkeypatch.setattr(cli_module, "get_config_unvalidated", fake_get_config)
 
 
 class FlakyEmbeddingClient:
@@ -381,7 +404,55 @@ def test_api_rag_endpoints_use_app_owned_repository() -> None:
     assert status_response.json()["counts"]["synced"] == 1
 
 
-def test_cli_rag_query_and_eval_surfaces_return_json(tmp_path: Path) -> None:
+def test_api_rag_import_endpoint_runs_import_and_sync() -> None:
+    config = InvoiceConfig(_env_file=None, mock=True, catalog_sync_enabled=True)
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+
+    with TestClient(app_instance) as client:
+        response = client.post(
+            "/internal/rag/import",
+            json={
+                "idempotency_key": "idem-api-import",
+                "payload": {
+                    "invoice_meta": {
+                        "supplier": "METRO",
+                        "invoice_number": "INV-API-IMPORT",
+                        "date": "2026-03-20",
+                    },
+                    "rows": [
+                        {
+                            "row_id": "r1",
+                            "name": "Greek Yogurt",
+                            "barcode": "123456",
+                            "quantity": 2,
+                            "line_total_lei": 40.0,
+                            "weight_kg": 0.5,
+                        }
+                    ],
+                },
+                "sync_after_import": True,
+                "sync_limit": 10,
+            },
+            headers={"Authorization": "Bearer test-supabase-jwt"},
+        )
+        query_response = client.post(
+            "/internal/rag/query",
+            json={"query": "greek yogurt order", "top_k": 5},
+            headers={"Authorization": "Bearer test-supabase-jwt"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["import"]["summary"]["created_count"] == 1
+    assert response.json()["sync"]["processed"] == 1
+    assert query_response.status_code == 200
+    assert query_response.json()["matches"][0]["product_id"] == "prod_1"
+
+
+def test_cli_rag_query_and_eval_surfaces_return_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
     repository = _get_cli_rag_resources(mock=True).import_repository
     repository.reset()
     seed_synced_product(
@@ -417,7 +488,10 @@ def test_cli_rag_query_and_eval_surfaces_return_json(tmp_path: Path) -> None:
     assert eval_payload["top_1_hits"] == 1
 
 
-def test_cli_rag_status_reports_counts_for_operational_visibility() -> None:
+def test_cli_rag_status_reports_counts_for_operational_visibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
     repository = _get_cli_rag_resources(mock=True).import_repository
     repository.reset()
     repository.create_or_reuse_product_sync(build_sync_record_input(product_id="prod_pending"))
@@ -436,3 +510,273 @@ def test_cli_rag_status_reports_counts_for_operational_visibility() -> None:
     assert payload["counts"]["failed"] == 1
     assert payload["counts"]["pending"] == 0
     assert payload["repeated_failures"][0]["attempt_count"] == 2
+
+
+def test_cli_rag_ingest_invoice_runs_extract_import_sync_and_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    resources = _get_cli_rag_resources(mock=True, enable_catalog_sync=True)
+    repository = resources.import_repository
+    repository.reset()
+
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%mock pdf\n")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_extract_single",
+        lambda *args, **kwargs: InvoiceData(
+            supplier="METRO",
+            invoice_number="INV-CLI-RAG",
+            date="2026-03-20",
+            total_amount=40.0,
+            currency="RON",
+            products=[
+                Product(
+                    raw_code="123456",
+                    name="Greek Yogurt",
+                    quantity=2,
+                    unit_price=20.0,
+                    total_price=40.0,
+                    confidence_score=0.98,
+                    row_id="row-1",
+                    weight_kg_candidate=0.5,
+                    uom="bucket",
+                )
+            ],
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "rag",
+            "ingest-invoice",
+            str(pdf_path),
+            "--mock",
+            "--json",
+            "--query",
+            "greek yogurt order",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["invoice"]["invoice_number"] == "INV-CLI-RAG"
+    assert payload["import"]["summary"]["created_count"] == 1
+    assert payload["sync"]["processed"] == 1
+    assert payload["query"]["matches"][0]["product_id"] == "prod_1"
+    assert len(repository.list_product_catalog_embeddings()) == 1
+
+
+def test_build_import_request_from_invoice_applies_default_weight_to_missing_rows() -> None:
+    invoice = InvoiceData(
+        supplier="METRO",
+        invoice_number="INV-WEIGHT",
+        date="2026-03-20",
+        total_amount=60.0,
+        currency="RON",
+        products=[
+            Product(
+                raw_code="123456",
+                name="Greek Yogurt",
+                quantity=2,
+                unit_price=20.0,
+                total_price=40.0,
+                confidence_score=0.98,
+                row_id="row-1",
+                weight_kg_candidate=None,
+            ),
+            Product(
+                raw_code="654321",
+                name="Mineral Water",
+                quantity=1,
+                unit_price=20.0,
+                total_price=20.0,
+                confidence_score=0.97,
+                row_id="row-2",
+                weight_kg_candidate=0.75,
+            ),
+        ],
+    )
+
+    request = _build_import_request_from_invoice(invoice, default_weight_kg=0.5)
+
+    assert request.rows[0].weight_kg == 0.5
+    assert request.rows[1].weight_kg == 0.75
+
+
+def test_cli_rag_ingest_invoice_supports_default_weight_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%mock pdf\n")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_extract_single",
+        lambda *args, **kwargs: InvoiceData(
+            supplier="MOCK SUPPLIER",
+            invoice_number="MOCK-001",
+            date="02-02-2026",
+            total_amount=383.47,
+            currency="MDL",
+            products=[
+                Product(
+                    raw_code="4840167001399",
+                    name="200G UNT CIOCOLATA JLC",
+                    quantity=5,
+                    unit_price=43.43,
+                    total_price=217.15,
+                    confidence_score=1.0,
+                    weight_kg_candidate=None,
+                ),
+                Product(
+                    raw_code="4840167002500",
+                    name="CIOCOLATA ALBA 70% 200G",
+                    quantity=4,
+                    unit_price=41.58,
+                    total_price=166.32,
+                    confidence_score=1.0,
+                    weight_kg_candidate=None,
+                ),
+            ],
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "rag",
+            "ingest-invoice",
+            str(pdf_path),
+            "--mock",
+            "--json",
+            "--idempotency-key",
+            "cli-weight-override-test",
+            "--default-weight-kg",
+            "0.5",
+            "--query",
+            "ciocolata",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["default_weight_kg"] == 0.5
+    assert payload["invoice"]["missing_weight_count"] == 2
+    assert payload["import"]["import_status"] == "completed"
+    assert payload["import"]["summary"]["created_count"] == 2
+    assert payload["sync"]["processed"] == 2
+    assert payload["query"]["matches"]
+
+
+def test_cli_rag_ingest_invoice_defaults_to_redacted_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    resources = _get_cli_rag_resources(mock=True, enable_catalog_sync=True)
+    resources.import_repository.reset()
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%mock pdf\n")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_extract_single",
+        lambda *args, **kwargs: InvoiceData(
+            supplier="METRO",
+            invoice_number="INV-CLI-SUMMARY",
+            date="2026-03-20",
+            total_amount=40.0,
+            currency="RON",
+            products=[
+                Product(
+                    raw_code="123456",
+                    name="Greek Yogurt",
+                    quantity=2,
+                    unit_price=20.0,
+                    total_price=40.0,
+                    confidence_score=0.98,
+                    row_id="row-1",
+                    weight_kg_candidate=0.5,
+                    uom="bucket",
+                )
+            ],
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["rag", "ingest-invoice", str(pdf_path), "--mock", "--query", "greek yogurt"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["invoice_number"] == "INV-CLI-SUMMARY"
+    assert payload["created_count"] == 1
+    assert payload["synced_count"] == 1
+    assert "invoice" not in payload
+    assert "import" not in payload
+    assert payload["top_match_product_ids"] == ["prod_1"]
+
+
+def test_cli_rag_resources_cache_key_includes_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    cli_module._CLI_RAG_RESOURCES = None
+    cli_module._CLI_RAG_RESOURCES_KEY = None
+    seen_backends: list[str] = []
+
+    def fake_get_config() -> InvoiceConfig:
+        backend = "memory" if not seen_backends else "supabase"
+        return InvoiceConfig(
+            _env_file=None,
+            mock=True,
+            catalog_sync_enabled=True,
+            import_repository_backend=backend,
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+        )
+
+    def fake_build_app_resources(config: InvoiceConfig):
+        seen_backends.append(config.import_repository_backend)
+        return build_app_resources(
+            config.model_copy(
+                update={
+                    "import_repository_backend": "memory",
+                    "catalog_sync_enabled": True,
+                }
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "get_config_unvalidated", fake_get_config)
+    monkeypatch.setattr(cli_module, "build_app_resources", fake_build_app_resources)
+
+    first = _get_cli_rag_resources(mock=True, enable_catalog_sync=True)
+    second = _get_cli_rag_resources(mock=True, enable_catalog_sync=True)
+
+    assert isinstance(first.import_repository, InMemoryInvoiceImportRepository)
+    assert isinstance(second.import_repository, InMemoryInvoiceImportRepository)
+    assert seen_backends == ["memory", "supabase"]
+    cli_module._CLI_RAG_RESOURCES = None
+    cli_module._CLI_RAG_RESOURCES_KEY = None
+
+def test_cli_rag_ingest_invoice_rejects_query_without_sync(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%mock pdf\n")
+
+    result = runner.invoke(
+        app,
+        [
+            "rag",
+            "ingest-invoice",
+            str(pdf_path),
+            "--mock",
+            "--no-sync",
+            "--query",
+            "greek yogurt order",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--query requires --sync" in result.output

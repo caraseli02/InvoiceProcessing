@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from invproc import __main__ as main_module
+from invproc.api import create_app
 
 
 runner = CliRunner()
@@ -36,7 +37,7 @@ def test_main_api_mode_runs_uvicorn(monkeypatch):
     result = runner.invoke(main_module.app, ["--mode", "api"])
 
     assert result.exit_code == 0
-    assert calls["args"] == ("invproc.api:create_app",)
+    assert calls["args"] == (create_app,)
     assert calls["kwargs"] == {
         "host": "127.0.0.1",
         "port": 9001,

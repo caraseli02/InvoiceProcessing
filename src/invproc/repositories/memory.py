@@ -8,6 +8,7 @@ from typing import Optional
 
 from invproc.repositories.base import (
     InvoiceImportRepository,
+    ProductCatalogEmbeddingMatch,
     ProductCatalogEmbeddingRecord,
     ProductCatalogEmbeddingRecordInput,
     ProductRecord,
@@ -358,6 +359,36 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
                     if record.embedding_model == embedding_model
                 ]
             return sorted(records, key=lambda record: record.created_at)
+
+    def search_product_catalog_embeddings(
+        self,
+        *,
+        query_embedding: list[float],
+        embedding_model: str,
+        top_k: int,
+    ) -> list[ProductCatalogEmbeddingMatch]:
+        def cosine_similarity(left: list[float], right: list[float]) -> float:
+            numerator = sum(a * b for a, b in zip(left, right, strict=True))
+            left_norm = sum(value * value for value in left) ** 0.5
+            right_norm = sum(value * value for value in right) ** 0.5
+            if left_norm == 0.0 or right_norm == 0.0:
+                return 0.0
+            return float(numerator / (left_norm * right_norm))
+
+        records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
+        matches = [
+            ProductCatalogEmbeddingMatch(
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                embedding_text=record.embedding_text,
+                metadata=dict(record.metadata),
+                score=cosine_similarity(query_embedding, record.embedding),
+            )
+            for record in records
+        ]
+        matches.sort(key=lambda match: match.score, reverse=True)
+        return matches[:top_k]
 
     def list_product_sync_records(self) -> list[ProductSyncRecord]:
         """Return sync rows in insertion order for tests."""

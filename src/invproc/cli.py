@@ -1,7 +1,7 @@
 """CLI interface for invoice processing."""
 
-import logging
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.progress import track
 
 from .config import get_config_unvalidated, reload_config, InvoiceConfig
+from .import_service import InvoiceImportService
+from .models import InvoiceImportRequest
 from .pdf_processor import PDFProcessor
 from .llm_extractor import LLMExtractor
 from .api import build_app_resources
@@ -59,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _CLI_RAG_RESOURCES: AppResources | None = None
-_CLI_RAG_RESOURCES_KEY: tuple[bool, str] | None = None
+_CLI_RAG_RESOURCES_KEY: tuple[bool, str, bool, str] | None = None
 
 
 @app.command()
@@ -251,14 +253,78 @@ def version() -> None:
     console.print("invproc version 0.1.0")
 
 
-def _get_cli_rag_resources(*, mock: bool) -> AppResources:
+def _build_default_idempotency_key(payload: InvoiceImportRequest) -> str:
+    """Derive a deterministic idempotency key from the effective import payload."""
+    encoded = json.dumps(
+        payload.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    import hashlib
+
+    return f"cli:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+
+def _build_import_request_from_invoice(
+    invoice_data: InvoiceData,
+    *,
+    default_weight_kg: float | None = None,
+) -> InvoiceImportRequest:
+    """Map extracted invoice output into the import request contract."""
+    if not invoice_data.products:
+        raise ValueError("Extracted invoice does not contain any products to import")
+
+    return InvoiceImportRequest.model_validate(
+        {
+            "invoice_meta": {
+                "supplier": invoice_data.supplier,
+                "invoice_number": invoice_data.invoice_number,
+                "date": invoice_data.date,
+            },
+            "rows": [
+                {
+                    "row_id": product.row_id or f"row-{index}",
+                    "name": product.name,
+                    "barcode": product.raw_code,
+                    "quantity": product.quantity,
+                    "line_total_lei": product.total_price,
+                    "weight_kg": product.weight_kg_candidate
+                    if product.weight_kg_candidate is not None
+                    else default_weight_kg,
+                }
+                for index, product in enumerate(invoice_data.products, start=1)
+            ],
+        }
+    )
+
+
+def _build_import_service(resources: AppResources) -> InvoiceImportService:
+    """Build an import service bound to the app-owned CLI resources."""
+    return InvoiceImportService(
+        config=resources.config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+
+
+def _get_cli_rag_resources(*, mock: bool, enable_catalog_sync: bool = False) -> AppResources:
     global _CLI_RAG_RESOURCES
     global _CLI_RAG_RESOURCES_KEY
 
-    config = get_config_unvalidated()
-    config.mock = mock
+    base_config = get_config_unvalidated()
+    config = base_config.model_copy(
+        update={
+            "mock": mock,
+            "catalog_sync_enabled": base_config.catalog_sync_enabled or enable_catalog_sync,
+        }
+    )
     config.validate_config()
-    cache_key = (config.mock, config.catalog_sync_embedding_model)
+    cache_key = (
+        config.mock,
+        config.catalog_sync_embedding_model,
+        config.catalog_sync_enabled,
+        config.import_repository_backend,
+    )
 
     if _CLI_RAG_RESOURCES is None or _CLI_RAG_RESOURCES_KEY != cache_key:
         _CLI_RAG_RESOURCES = build_app_resources(config)
@@ -270,8 +336,12 @@ def _get_cli_rag_resources(*, mock: bool) -> AppResources:
 def _build_rag_services(
     *,
     mock: bool,
+    enable_catalog_sync: bool = False,
 ) -> tuple[AppResources, CatalogSyncWorker, CatalogRetrievalService]:
-    resources = _get_cli_rag_resources(mock=mock)
+    resources = _get_cli_rag_resources(
+        mock=mock,
+        enable_catalog_sync=enable_catalog_sync,
+    )
     worker = build_rag_worker(
         repository=resources.import_repository,
         config=resources.config,
@@ -282,6 +352,149 @@ def _build_rag_services(
         config=resources.config,
     )
     return resources, worker, retrieval_service
+
+
+@rag_app.command("ingest-invoice")
+def rag_ingest_invoice(
+    input_file: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="Invoice PDF file to extract, import, and optionally sync.",
+    ),
+    idempotency_key: Optional[str] = typer.Option(
+        None,
+        "--idempotency-key",
+        help="Override the default deterministic CLI idempotency key.",
+    ),
+    sync: bool = typer.Option(
+        True,
+        "--sync/--no-sync",
+        help="Process catalog sync rows after import in the same invocation.",
+    ),
+    limit: int = typer.Option(
+        100,
+        "--limit",
+        min=1,
+        help="Maximum catalog sync rows to process when --sync is enabled.",
+    ),
+    default_weight_kg: Optional[float] = typer.Option(
+        None,
+        "--default-weight-kg",
+        min=0.000001,
+        help="Fallback weight to use for extracted rows that are missing weight_kg_candidate.",
+    ),
+    query: Optional[str] = typer.Option(
+        None,
+        "--query",
+        help="Optional semantic query to run after sync for end-to-end validation.",
+    ),
+    top_k: int = typer.Option(
+        5,
+        "--top-k",
+        min=1,
+        help="Number of semantic matches to return when --query is used.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the full machine-readable payload instead of the default summary.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show extraction configuration details before ingestion.",
+    ),
+    mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use deterministic mock extraction/embedding behavior for testing.",
+    ),
+) -> None:
+    """Run extract -> import -> sync for one invoice PDF using app-owned resources."""
+    if query is not None and not sync:
+        raise typer.BadParameter("--query requires --sync so vectors exist before retrieval")
+
+    resources, worker, retrieval_service = _build_rag_services(
+        mock=mock,
+        enable_catalog_sync=True,
+    )
+    invoice_data = _extract_single(
+        input_file,
+        resources.config,
+        debug=False,
+        verbose=verbose,
+        mock=mock,
+    )
+    missing_weight_count = sum(
+        1 for product in invoice_data.products if product.weight_kg_candidate is None
+    )
+    import_request = _build_import_request_from_invoice(
+        invoice_data,
+        default_weight_kg=default_weight_kg,
+    )
+    service = _build_import_service(resources)
+    resolved_idempotency_key = idempotency_key or _build_default_idempotency_key(import_request)
+    import_response = service.import_rows(
+        import_request,
+        idempotency_key=resolved_idempotency_key,
+    )
+
+    payload: dict[str, object] = {
+        "invoice": {
+            "supplier": invoice_data.supplier,
+            "invoice_number": invoice_data.invoice_number,
+            "date": invoice_data.date,
+            "currency": invoice_data.currency,
+            "product_count": len(invoice_data.products),
+            "missing_weight_count": missing_weight_count,
+        },
+        "idempotency_key": resolved_idempotency_key,
+        "default_weight_kg": default_weight_kg,
+        "import": import_response.model_dump(mode="json"),
+    }
+    sync_payload: dict[str, object] | None = None
+    query_payload: dict[str, object] | None = None
+
+    if sync:
+        results = worker.sync_pending(limit=limit)
+        sync_payload = {
+            "processed": len(results),
+            "results": [result.__dict__ for result in results],
+        }
+        payload["sync"] = sync_payload
+
+    if query is not None:
+        query_payload = serialize_query_result(retrieval_service.query(query, top_k=top_k))
+        payload["query"] = query_payload
+
+    if json_output:
+        print(json.dumps(payload, indent=2))
+        return
+
+    summary: dict[str, object] = {
+        "invoice_number": invoice_data.invoice_number,
+        "product_count": len(invoice_data.products),
+        "missing_weight_count": missing_weight_count,
+        "import_status": import_response.import_status,
+        "created_count": import_response.summary.created_count,
+        "updated_count": import_response.summary.updated_count,
+        "error_count": import_response.summary.error_count,
+    }
+    if sync_payload is not None:
+        summary["synced_count"] = sync_payload["processed"]
+    if query_payload is not None:
+        query_matches = query_payload.get("matches")
+        if not isinstance(query_matches, list):
+            raise RuntimeError("serialize_query_result returned a non-list matches payload")
+        summary["top_match_product_ids"] = [
+            str(match["product_id"])
+            for match in query_matches
+            if isinstance(match, dict) and "product_id" in match
+        ]
+    print(json.dumps(summary, indent=2))
 
 
 @rag_app.command("sync-pending")

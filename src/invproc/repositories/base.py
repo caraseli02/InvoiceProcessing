@@ -120,6 +120,18 @@ class ProductCatalogEmbeddingRecord:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class ProductCatalogEmbeddingMatch:
+    """Search result returned by repository-native vector queries."""
+
+    product_id: str
+    product_snapshot_hash: str
+    embedding_model: str
+    embedding_text: str
+    metadata: dict[str, Any]
+    score: float
+
+
 class InvoiceImportRepository(Protocol):
     """Persistence operations required for invoice import."""
 
@@ -201,4 +213,13 @@ class InvoiceImportRepository(Protocol):
         *,
         embedding_model: Optional[str] = None,
     ) -> list[ProductCatalogEmbeddingRecord]:
+        ...
+
+    def search_product_catalog_embeddings(
+        self,
+        *,
+        query_embedding: list[float],
+        embedding_model: str,
+        top_k: int,
+    ) -> list[ProductCatalogEmbeddingMatch]:
         ...

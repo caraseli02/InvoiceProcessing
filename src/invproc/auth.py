@@ -44,13 +44,6 @@ class SupabaseClientProvider:
                     self._config.supabase_service_role_key,
                 )
         return self._client
-def get_supabase_client(
-    provider: SupabaseClientProvider = Depends(get_supabase_client_provider),
-) -> Client:
-    """Resolve a Supabase client through the app-scoped provider."""
-    return provider.get_client()
-
-
 def fetch_supabase_user(token: str, client: Client) -> dict[str, Any]:
     """Return user payload for a verified Supabase JWT."""
     response = client.auth.get_user(token)
@@ -76,7 +69,7 @@ def fetch_supabase_user(token: str, client: Client) -> dict[str, Any]:
 async def verify_supabase_jwt(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     config: InvoiceConfig = Depends(get_app_config),
-    client: Client = Depends(get_supabase_client),
+    provider: SupabaseClientProvider = Depends(get_supabase_client_provider),
 ) -> dict[str, Any]:
     """Verify Bearer token with Supabase and return authenticated user payload."""
     if not credentials or credentials.scheme.lower() != "bearer":
@@ -92,6 +85,7 @@ async def verify_supabase_jwt(
         return {"id": "api-key-user", "auth": "api_key"}
 
     try:
+        client = provider.get_client()
         return fetch_supabase_user(token, client)
     except HTTPException:
         raise
