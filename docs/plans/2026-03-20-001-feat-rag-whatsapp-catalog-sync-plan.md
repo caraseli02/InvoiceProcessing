@@ -1,7 +1,7 @@
 ---
 title: feat: Add RAG catalog sync contract for WhatsApp orders agent
 type: feat
-status: active
+status: completed
 date: 2026-03-20
 origin: docs/brainstorms/2026-03-13-rag-whatsapp-orders-agent-evaluation.md
 ---
@@ -331,6 +331,29 @@ The origin is strong on the product decision but leaves several execution gaps t
 - [ ] `python -m pytest -q`
 - [ ] Coverage remains at or above the repo’s `80%` fail-under threshold.
 - [ ] Any merge-ready PR includes exactly one required change label and the matching evidence section from the PR template.
+
+### Pre-PR Validation For Phase 2
+
+Phase 2 does not need to wait for Phase 3 before opening a PR, because this phase only claims backend producer behavior.
+
+- [x] runtime app resources construct a real catalog sync producer when `catalog_sync_enabled=true`
+- [x] runtime app resources use a noop producer when sync is disabled
+- [x] successful imports emit exactly one sync intent per persisted product snapshot
+- [x] unchanged re-imports do not create duplicate sync rows
+- [x] idempotent replays do not create extra sync work
+- [x] sync-emission failures remain fail-open and do not replay import side effects
+- [x] full repo quality gates pass
+
+Current validation boundary:
+
+- use `tests/test_catalog_sync.py` for service-level behavior and runtime app-resource wiring
+- use `python -m pytest -q` as the merge gate
+- do not wait for retrieval/search assertions; those belong to Phase 3+
+
+Known limitation:
+
+- there is still no live `/invoice/import` API route in MVP simple mode, so there is no meaningful HTTP-level import integration test to add yet
+- the strongest available pre-PR verification is app-resource wiring plus direct `InvoiceImportService` tests
 
 ## Success Metrics
 

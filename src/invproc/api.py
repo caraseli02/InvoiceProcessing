@@ -30,8 +30,19 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from invproc.auth import SupabaseClientProvider, verify_supabase_jwt
+from invproc.catalog_sync import (
+    CatalogSyncProducer,
+    NoopCatalogSyncProducer,
+    RepositoryCatalogSyncProducer,
+)
 from invproc.config import InvoiceConfig, build_config
-from invproc.dependencies import AppResources, get_app_config, get_extract_cache
+from invproc.dependencies import (
+    AppResources,
+    get_app_config,
+    get_catalog_sync_producer,
+    get_extract_cache,
+    get_import_repository,
+)
 from invproc.extract_cache import InMemoryExtractCache
 from invproc.exceptions import ContractError
 from invproc.import_service import InvoiceImportService
@@ -45,6 +56,8 @@ from invproc.pdf_processor import PDFProcessor
 from invproc.services.extract_service import run_extract_pipeline
 from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
+from invproc.repositories.base import InvoiceImportRepository
+from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -76,10 +89,20 @@ def build_app_resources(config: InvoiceConfig) -> AppResources:
         max_entries=config.extract_cache_max_entries,
     )
     supabase_client_provider = SupabaseClientProvider(config)
+    import_repository = InMemoryInvoiceImportRepository()
+    if config.catalog_sync_enabled:
+        catalog_sync_producer: CatalogSyncProducer = RepositoryCatalogSyncProducer(
+            import_repository,
+            embedding_model=config.catalog_sync_embedding_model,
+        )
+    else:
+        catalog_sync_producer = NoopCatalogSyncProducer()
     return AppResources(
         config=config,
         extract_cache=extract_cache,
         supabase_client_provider=supabase_client_provider,
+        import_repository=import_repository,
+        catalog_sync_producer=catalog_sync_producer,
     )
 
 
@@ -100,9 +123,15 @@ def get_validator(config: InvoiceConfig = Depends(get_app_config)) -> InvoiceVal
 
 def get_import_service(
     config: InvoiceConfig = Depends(get_app_config),
+    repository: InvoiceImportRepository = Depends(get_import_repository),
+    catalog_sync_producer: CatalogSyncProducer = Depends(get_catalog_sync_producer),
 ) -> InvoiceImportService:
     """Get invoice preview service instance."""
-    return InvoiceImportService(config=config)
+    return InvoiceImportService(
+        config=config,
+        repository=repository,
+        catalog_sync_producer=catalog_sync_producer,
+    )
 
 
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]

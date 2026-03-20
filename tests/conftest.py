@@ -9,9 +9,11 @@ from fastapi.testclient import TestClient
 
 from invproc.api import create_app
 from invproc.auth import SupabaseClientProvider, get_supabase_client
+from invproc.catalog_sync import NoopCatalogSyncProducer
 from invproc.config import InvoiceConfig
 from invproc.dependencies import AppResources, get_app_config, get_extract_cache
 from invproc.extract_cache import InMemoryExtractCache
+from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 TEST_SUPABASE_TOKEN = "test-supabase-jwt"
 
@@ -73,6 +75,8 @@ def api_test_app(
         config=api_test_config,
         extract_cache=api_test_extract_cache,
         supabase_client_provider=SupabaseClientProvider(api_test_config),
+        import_repository=InMemoryInvoiceImportRepository(),
+        catalog_sync_producer=NoopCatalogSyncProducer(),
     )
     app = create_app(resources=resources)
     app.dependency_overrides[get_app_config] = lambda: api_test_config

@@ -236,6 +236,16 @@ class InvoiceConfig(BaseSettings):
         description="Maximum number of cached extraction entries",
     )
 
+    catalog_sync_enabled: bool = Field(
+        default=False,
+        description="Enable durable catalog sync intent emission after successful imports",
+    )
+
+    catalog_sync_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="Embedding model identifier stored on emitted catalog sync rows",
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
