@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -51,6 +52,11 @@ def configure_cli_for_memory_backend(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(cli_module, "get_config_unvalidated", fake_get_config)
+
+
+def strip_ansi(text: str) -> str:
+    """Normalize Typer/Rich CLI output for stable assertions across environments."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class FlakyEmbeddingClient:
@@ -779,4 +785,8 @@ def test_cli_rag_ingest_invoice_rejects_query_without_sync(tmp_path: Path) -> No
     )
 
     assert result.exit_code != 0
-    assert "--query requires --sync" in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert result.exception.code == 2
+    normalized_output = strip_ansi(result.output)
+    assert "Invalid value:" in normalized_output
+    assert "requires --sync" in normalized_output
