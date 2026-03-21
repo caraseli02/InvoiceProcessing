@@ -1,80 +1,95 @@
 {
-  "description": "Representative WhatsApp-style catalog queries for RAG evaluation. Update expected_product_id values with real Supabase UUIDs once catalog is populated from invoice imports. Use expected_name for name-based matching when UUIDs are unknown.",
+  "description": "Eval fixture built from real METRO Cash & Carry Moldova invoice #94. Products are abbreviated names in Romanian/Russian. Update expected_product_id values if products are re-imported with new UUIDs.",
   "queries": [
     {
-      "query": "need greek yogurt for metro order",
-      "expected_product_id": "prod_yogurt",
-      "notes": "Fuzzy natural-language: product name with context words."
+      "query": "halva cu arahide",
+      "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+      "expected_name": "HALVA ARAHIDE",
+      "notes": "Fuzzy Romanian: peanut halva. Semantic + lexical should both hit."
     },
     {
-      "query": "please add orange juice carton",
-      "expected_product_id": "prod_juice",
-      "notes": "Fuzzy natural-language: product category + packaging."
+      "query": "halva",
+      "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+      "expected_name": "HALVA",
+      "notes": "Single-term exact match. Lexical should excel."
     },
     {
-      "query": "iaurt grecesc metro",
-      "expected_name": "yogurt",
-      "notes": "Romanian product name (iaurt grecesc = Greek yogurt). Tests multilingual fuzzy match."
+      "query": "halva victorita vanilie sau arahide",
+      "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+      "expected_name": "HALVA",
+      "notes": "Fuzzy multi-word: halva victorita vanilla or peanut. Tests semantic ranking."
     },
     {
-      "query": "suc de portocale",
-      "expected_name": "juice",
-      "notes": "Romanian: suc de portocale = orange juice. Tests non-English product phrase."
+      "query": "ceai de fructe",
+      "expected_product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+      "expected_name": "CEAI",
+      "notes": "Romanian: fruit tea. Semantic should surface CEAI LOVARE or CEAI ZMEURA."
+    },
+    {
+      "query": "CEAI",
+      "expected_product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+      "expected_name": "CEAI",
+      "notes": "Exact uppercase term. Both lexical and semantic should hit."
+    },
+    {
+      "query": "lapte condensat",
+      "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+      "expected_name": "LAPTE CONDEN",
+      "notes": "Romanian: condensed milk. Semantic should rank LAPTE CONDEN products first."
     },
     {
       "query": "re-comanda laptele de la saptamana trecuta",
-      "expected_name": "lapte",
-      "notes": "Romanian order repetition phrase: re-order the milk from last week. Tests fluffy intent phrasing."
+      "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+      "expected_name": "LAPTE",
+      "notes": "Fluffy WhatsApp order repetition phrase in Romanian. Tests semantic intent understanding."
     },
     {
-      "query": "8001480015630",
-      "expected_name": "yogurt",
-      "notes": "Exact EAN-13 barcode lookup. Lexical mode should excel here; hybrid should also catch it."
+      "query": "ficat de cod",
+      "expected_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+      "expected_name": "FICAT DE COD",
+      "notes": "Romanian: cod liver. Tests exact product type phrase."
     },
     {
-      "query": "cod 8001480015630",
-      "expected_name": "yogurt",
-      "notes": "Romanian barcode prefix (cod = code) + EAN. Tests prefix-bearing barcode query."
+      "query": "4841259001754",
+      "expected_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+      "expected_name": "FICAT DE COD",
+      "notes": "Exact EAN-13 barcode for cod liver. Lexical should excel; semantic may miss."
     },
     {
-      "query": "apa minerala 1.5L",
-      "expected_name": "apa",
-      "notes": "Romanian: mineral water 1.5L. Tests category + size abbreviation."
+      "query": "seminte floarea soarelui",
+      "expected_product_id": "2c21fb1a-fb53-41ce-9a7a-f7dbc627e505",
+      "expected_name": "SEM FL",
+      "notes": "Romanian: sunflower seeds. Abbreviated as SEM FL SOARE in catalog."
     },
     {
-      "query": "biscuiti digestivi",
-      "expected_name": "biscuit",
-      "notes": "Romanian: digestive biscuits. Category-level fuzzy match."
+      "query": "turta dulce cu prune",
+      "expected_product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+      "expected_name": "TURTA DULCE",
+      "notes": "Romanian: gingerbread with plums. Semantic should surface TURTA DULCE LUXUS PRUNE."
     },
     {
-      "query": "ulei floarea soarelui 1L",
-      "expected_name": "ulei",
-      "notes": "Romanian: sunflower oil 1L. Tests oil category with Romanian name."
+      "query": "turta dulce",
+      "expected_product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+      "expected_name": "TURTA DULCE",
+      "notes": "Romanian: gingerbread. Exact two-word phrase match."
     },
     {
-      "query": "faina alba 1kg",
-      "expected_name": "faina",
-      "notes": "Romanian: white flour 1kg. Tests commodity product with unit."
+      "query": "gris grau",
+      "expected_product_id": "f43535ca-395c-4644-9247-858fb922f98a",
+      "expected_name": "ARNAUT GRAU",
+      "notes": "Romanian: semolina/wheat. ARNAUT GRAU BUNETTO is semolina. Tests category concept match."
     },
     {
-      "query": "zahar tos 1kg metro",
-      "expected_name": "zahar",
-      "notes": "Romanian: granulated sugar 1kg METRO. Tests brand context word alongside product."
+      "query": "ceai pentru bebelusi plante",
+      "expected_product_id": "cecf5fc6-8835-432b-a547-aae81c05fe67",
+      "expected_name": "AMESTEC DE PLANTE BABY",
+      "notes": "Romanian: herbal tea for babies. AMESTEC DE PLANTE BABY FL. Tests semantic category match."
     },
     {
-      "query": "cascaval telemea",
-      "expected_name": "cascaval",
-      "notes": "Romanian cheese variant name. Tests partial product type match."
-    },
-    {
-      "query": "detergent vase fairy",
-      "expected_name": "detergent",
-      "notes": "Romanian: dish detergent Fairy brand. Tests brand name alongside category."
-    },
-    {
-      "query": "pui intreg congelat",
-      "expected_name": "pui",
-      "notes": "Romanian: whole frozen chicken. Tests meat category with preparation state."
+      "query": "4820012682966",
+      "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+      "expected_name": "LAPTE CONDEN",
+      "notes": "Exact EAN-13 barcode for condensed milk IRISK. Lexical should find it directly."
     }
   ]
 }
