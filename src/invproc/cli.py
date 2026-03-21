@@ -27,6 +27,7 @@ from .rag import (
     build_sync_status_snapshot,
     load_eval_cases,
     serialize_eval_result,
+    serialize_mode_comparison,
     serialize_query_result,
     serialize_sync_status_snapshot,
 )
@@ -559,12 +560,30 @@ def rag_eval(
         "--mock",
         help="Use deterministic offline embeddings instead of OpenAI API calls.",
     ),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Search mode to evaluate: semantic, lexical, or hybrid.",
+    ),
+    all_modes: bool = typer.Option(
+        False,
+        "--all-modes",
+        help="Run eval for all three search modes and print a side-by-side comparison.",
+    ),
 ) -> None:
     """Evaluate retrieval quality with representative WhatsApp-style queries."""
+    if mode not in ("semantic", "lexical", "hybrid"):
+        typer.echo(f"Invalid mode '{mode}'. Choose: semantic, lexical, hybrid.", err=True)
+        raise typer.Exit(code=1)
     _, _, retrieval_service = _build_rag_services(mock=mock)
     evaluator = CatalogRagEvaluator(retrieval_service)
-    result = evaluator.evaluate(load_eval_cases(fixture_path))
-    print(json.dumps(serialize_eval_result(result), indent=2))
+    cases = load_eval_cases(fixture_path)
+    if all_modes:
+        comparison = evaluator.evaluate_all_modes(cases)
+        print(json.dumps(serialize_mode_comparison(comparison), indent=2))
+    else:
+        result = evaluator.evaluate(cases, mode=mode)  # type: ignore[arg-type]
+        print(json.dumps(serialize_eval_result(result), indent=2))
 
 
 @rag_app.command("status")

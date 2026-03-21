@@ -163,7 +163,7 @@ Estimated effort:
 
 - 0.5-1 day
 
-#### Phase 2: Add backend sync producer in `invproc`
+#### Phase 2: Add backend sync producer in `invproc` ✅ completed (PR #26)
 
 Deliverables:
 
@@ -184,7 +184,7 @@ Estimated effort:
 
 - 1-2 days
 
-#### Phase 3: Add backend RAG consumer and vector refresh path in `invproc`
+#### Phase 3: Add backend RAG consumer and vector refresh path in `invproc` ✅ completed (PR #27)
 
 Deliverables:
 
@@ -208,7 +208,7 @@ Estimated effort:
 
 - 1-2 days
 
-#### Phase 4: Add invoice-to-catalog ingestion path for real RAG population
+#### Phase 4: Add invoice-to-catalog ingestion path for real RAG population ✅ completed (PR #28, #29)
 
 Deliverables:
 
@@ -220,6 +220,15 @@ Deliverables:
   - a backend CLI/admin flow that runs extract -> import -> sync
 - initial implementation choice: ship a backend CLI/admin flow first via `python -m invproc rag ingest-invoice <pdf> [--query "..."]`
 - next point of Phase 4: replace per-process in-memory sync/vector state with a shared Supabase-backed repository so CLI and API retrieval operate on the same durable store
+
+Shipped in this phase (PR #29):
+- hybrid search: BM25 lexical + pgvector semantic + RRF merge (`search_mode: hybrid|semantic|lexical`)
+- `search_product_catalog_embeddings_lexical` SQL RPC via `'simple'` dictionary (multilingual-safe)
+- parallel dispatch via `ThreadPoolExecutor` for hybrid mode
+- `/internal/rag/eval` endpoint for agent-native eval parity
+- security hardening: `SecretStr` for sensitive config, `verify_internal_caller` on `/internal/*`
+
+Note: hybrid retrieval shipped ahead of Phase 5 evaluation. The contract has been updated accordingly.
 
 Success criteria:
 
@@ -234,21 +243,26 @@ Estimated effort:
 
 - 1-2 days
 
-#### Phase 5: Validate retrieval quality and operational behavior
+#### Phase 5: Validate retrieval quality and operational behavior 🔄 in-progress
+
+Note: Hybrid retrieval (BM25 + pgvector + RRF) shipped as part of Phase 4 (PR #29) before formal Phase 5 evaluation. Phase 5 now formally validates that hybrid is the correct default and tunes threshold/top-K against representative order utterances.
 
 Deliverables:
 
-- measure retrieval precision on representative WhatsApp queries
-- verify latency impact and freshness SLO
-- test failure and replay paths
-- tune match threshold and top-K using real order prompts instead of freezing them up front
-- decide whether pure semantic search is sufficient or whether hybrid retrieval (semantic + keyword/barcode matching) is needed
+- [x] hybrid search shipped: `semantic`, `lexical`, `hybrid` (RRF) modes available
+- [ ] `rag_match_threshold` config field: apply score floor in `CatalogRetrievalService.query()` so low-confidence matches are filtered
+- [ ] multi-mode eval: `rag eval --mode <mode>` and `rag eval --all-modes` for side-by-side comparison
+- [ ] expanded eval fixture: Romanian/multilingual WhatsApp-style order phrases; `expected_name` fallback for name-based match
+- [ ] freshness SLO documented in contract: target window from import to searchable
+- [ ] contract updated: hybrid exclusion removed from scope boundary
 
 Success criteria:
 
-- top-K retrieval surfaces correct products for common order utterances
-- vector sync stays aligned with product table over repeated imports
-- no hallucination regressions on known agent scenarios
+- `rag eval --all-modes` produces a top-1/top-5 comparison across semantic, lexical, and hybrid modes
+- hybrid confirmed as default or a data-driven decision made to change it
+- score threshold is configurable and default-off (0.0) so existing behavior is unchanged unless explicitly set
+- eval fixture covers fuzzy name, exact barcode/SKU, category-only, and abbreviated product references
+- contract reflects current implementation state
 
 Estimated effort:
 

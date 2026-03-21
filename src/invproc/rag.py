@@ -171,6 +171,7 @@ class CatalogQueryResult:
     top_k: int
     search_mode: str
     matches: list[CatalogRagMatch]
+    match_threshold: float = 0.0
 
     @property
     def has_match(self) -> bool:
@@ -179,10 +180,20 @@ class CatalogQueryResult:
 
 @dataclass(frozen=True)
 class CatalogEvalCase:
-    """One evaluation query and expected result."""
+    """One evaluation query and expected result.
+
+    Either ``expected_product_id`` or ``expected_name`` must be provided.
+    ``expected_name`` is matched as a case-insensitive substring of the
+    match's ``embedding_text``; useful when the exact product UUID is unknown.
+    """
 
     query: str
-    expected_product_id: str
+    expected_product_id: str = ""
+    expected_name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.expected_product_id and not self.expected_name:
+            raise ValueError("CatalogEvalCase requires expected_product_id or expected_name")
 
 
 @dataclass(frozen=True)
@@ -205,6 +216,15 @@ class CatalogEvalResult:
         if self.total_queries == 0:
             return 0.0
         return self.top_5_hits / self.total_queries
+
+
+@dataclass(frozen=True)
+class CatalogModeComparisonResult:
+    """Side-by-side eval metrics for all three search modes."""
+
+    semantic: CatalogEvalResult
+    lexical: CatalogEvalResult
+    hybrid: CatalogEvalResult
 
 
 @dataclass(frozen=True)
@@ -311,10 +331,12 @@ class CatalogRetrievalService:
         repository: InvoiceImportRepository,
         embedding_client: EmbeddingClient,
         default_embedding_model: str,
+        match_threshold: float = 0.0,
     ) -> None:
         self.repository = repository
         self.embedding_client = embedding_client
         self.default_embedding_model = default_embedding_model
+        self.match_threshold = match_threshold
 
     def query(
         self,
@@ -323,6 +345,7 @@ class CatalogRetrievalService:
         top_k: int = 5,
         embedding_model: Optional[str] = None,
         mode: Literal["semantic", "lexical", "hybrid"] = "hybrid",
+        match_threshold: Optional[float] = None,
     ) -> CatalogQueryResult:
         model = embedding_model or self.default_embedding_model
 
@@ -364,11 +387,13 @@ class CatalogRetrievalService:
 
             raw_matches = rrf_merge(semantic, lexical, top_k=top_k)
 
+        effective_threshold = match_threshold if match_threshold is not None else self.match_threshold
         return CatalogQueryResult(
             query=text,
             embedding_model=model,
             top_k=top_k,
             search_mode=mode,
+            match_threshold=effective_threshold,
             matches=[
                 CatalogRagMatch(
                     product_id=match.product_id,
@@ -379,6 +404,7 @@ class CatalogRetrievalService:
                     embedding_text=match.embedding_text,
                 )
                 for match in raw_matches
+                if match.score >= effective_threshold
             ],
         )
 
@@ -389,15 +415,28 @@ class CatalogRagEvaluator:
     def __init__(self, retrieval_service: CatalogRetrievalService) -> None:
         self.retrieval_service = retrieval_service
 
-    def evaluate(self, cases: list[CatalogEvalCase]) -> CatalogEvalResult:
+    def evaluate(
+        self,
+        cases: list[CatalogEvalCase],
+        *,
+        mode: Literal["semantic", "lexical", "hybrid"] = "hybrid",
+    ) -> CatalogEvalResult:
         results: list[dict[str, Any]] = []
         top_1_hits = 0
         top_5_hits = 0
         for case in cases:
-            query_result = self.retrieval_service.query(case.query, top_k=5)
+            query_result = self.retrieval_service.query(case.query, top_k=5, mode=mode)
             ranked_product_ids = [match.product_id for match in query_result.matches]
-            top_1 = bool(ranked_product_ids[:1] and ranked_product_ids[0] == case.expected_product_id)
-            top_5 = case.expected_product_id in ranked_product_ids[:5]
+            embedding_texts = [match.embedding_text.lower() for match in query_result.matches]
+
+            if case.expected_product_id:
+                top_1 = bool(ranked_product_ids[:1] and ranked_product_ids[0] == case.expected_product_id)
+                top_5 = case.expected_product_id in ranked_product_ids[:5]
+            else:
+                needle = case.expected_name.lower()
+                top_1 = bool(embedding_texts[:1] and needle in embedding_texts[0])
+                top_5 = any(needle in t for t in embedding_texts[:5])
+
             if top_1:
                 top_1_hits += 1
             if top_5:
@@ -406,9 +445,11 @@ class CatalogRagEvaluator:
                 {
                     "query": case.query,
                     "expected_product_id": case.expected_product_id,
+                    "expected_name": case.expected_name,
                     "ranked_product_ids": ranked_product_ids,
                     "top_1_hit": top_1,
                     "top_5_hit": top_5,
+                    "search_mode": mode,
                 }
             )
 
@@ -419,12 +460,25 @@ class CatalogRagEvaluator:
             cases=results,
         )
 
+    def evaluate_all_modes(self, cases: list[CatalogEvalCase]) -> CatalogModeComparisonResult:
+        """Run evaluate() for all three search modes and return side-by-side results."""
+        return CatalogModeComparisonResult(
+            semantic=self.evaluate(cases, mode="semantic"),
+            lexical=self.evaluate(cases, mode="lexical"),
+            hybrid=self.evaluate(cases, mode="hybrid"),
+        )
+
 
 def load_eval_cases(path: Path) -> list[CatalogEvalCase]:
-    """Load evaluation queries from a JSON fixture."""
+    """Load evaluation queries from a JSON fixture.
+
+    Unknown keys (e.g. ``notes``) are silently ignored so fixture files can
+    carry human-readable annotations without breaking deserialization.
+    """
     payload = json.loads(path.read_text())
     raw_cases = payload["queries"] if isinstance(payload, dict) else payload
-    return [CatalogEvalCase(**raw_case) for raw_case in raw_cases]
+    known = {"query", "expected_product_id", "expected_name"}
+    return [CatalogEvalCase(**{k: v for k, v in raw_case.items() if k in known}) for raw_case in raw_cases]
 
 
 def serialize_query_result(result: CatalogQueryResult) -> dict[str, Any]:
@@ -434,6 +488,7 @@ def serialize_query_result(result: CatalogQueryResult) -> dict[str, Any]:
         "embedding_model": result.embedding_model,
         "top_k": result.top_k,
         "search_mode": result.search_mode,
+        "match_threshold": result.match_threshold,
         "matches": [
             {
                 "product_id": match.product_id,
@@ -457,6 +512,26 @@ def serialize_eval_result(result: CatalogEvalResult) -> dict[str, Any]:
         "top_1_hit_rate": result.top_1_hit_rate,
         "top_5_hit_rate": result.top_5_hit_rate,
         "cases": result.cases,
+    }
+
+
+def serialize_mode_comparison(comparison: CatalogModeComparisonResult) -> dict[str, Any]:
+    """Convert a multi-mode comparison into a JSON-friendly structure."""
+    return {
+        "summary": {
+            mode: {
+                "top_1_hit_rate": getattr(comparison, mode).top_1_hit_rate,
+                "top_5_hit_rate": getattr(comparison, mode).top_5_hit_rate,
+                "top_1_hits": getattr(comparison, mode).top_1_hits,
+                "top_5_hits": getattr(comparison, mode).top_5_hits,
+                "total_queries": getattr(comparison, mode).total_queries,
+            }
+            for mode in ("semantic", "lexical", "hybrid")
+        },
+        "by_mode": {
+            mode: serialize_eval_result(getattr(comparison, mode))
+            for mode in ("semantic", "lexical", "hybrid")
+        },
     }
 
 
@@ -543,4 +618,5 @@ def build_retrieval_service(
         repository=repository,
         embedding_client=embedding_client or OpenAIEmbeddingClient(config),
         default_embedding_model=config.catalog_sync_embedding_model,
+        match_threshold=config.rag_match_threshold,
     )
