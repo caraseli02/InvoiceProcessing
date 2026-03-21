@@ -223,3 +223,12 @@ class InvoiceImportRepository(Protocol):
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
         ...
+
+    def search_product_catalog_embeddings_lexical(
+        self,
+        *,
+        query_text: str,
+        embedding_model: str,
+        top_k: int,
+    ) -> list[ProductCatalogEmbeddingMatch]:
+        ...

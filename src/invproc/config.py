@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 import pycountry
@@ -40,7 +40,7 @@ class InvoiceConfig(BaseSettings):
         extra="ignore",
     )
 
-    openai_api_key: Optional[str] = Field(
+    openai_api_key: Optional[SecretStr] = Field(
         default=None,
         description="OpenAI API key (can use env var: OPENAI_API_KEY or INVPROC_OPENAI_API_KEY)",
     )
@@ -63,6 +63,16 @@ class InvoiceConfig(BaseSettings):
     allow_api_key_auth: bool = Field(
         default=False,
         description="Allow API key auth bypass (dev-only). Must be false in production.",
+    )
+
+    api_keys: Optional[SecretStr] = Field(
+        default=None,
+        description="Comma-separated API keys for dev bypass (used when ALLOW_API_KEY_AUTH=true).",
+    )
+
+    internal_api_keys: Optional[SecretStr] = Field(
+        default=None,
+        description="Comma-separated API keys for internal/* endpoints.",
     )
 
     extract_cache_debug_headers: bool = Field(
@@ -200,7 +210,7 @@ class InvoiceConfig(BaseSettings):
         description="Supabase project URL for JWT validation",
     )
 
-    supabase_service_role_key: Optional[str] = Field(
+    supabase_service_role_key: Optional[SecretStr] = Field(
         default=None,
         description="Supabase service role key for server-side token verification",
     )
@@ -303,27 +313,14 @@ class InvoiceConfig(BaseSettings):
             if ";" in self.ocr_config or "&" in self.ocr_config:
                 errors.append("OCR_CONFIG contains suspicious characters (; or &)")
 
-        # Validate numeric ranges
-        if self.temperature < 0 or self.temperature > 2:
-            errors.append("TEMPERATURE must be between 0 and 2")
-
-        if self.scale_factor <= 0:
-            errors.append("SCALE_FACTOR must be positive")
-
-        if self.ocr_dpi < 72 or self.ocr_dpi > 600:
-            errors.append("OCR_DPI must be between 72 and 600")
-
-        if self.max_pdf_size_mb < 1 or self.max_pdf_size_mb > 50:
-            errors.append("MAX_PDF_SIZE_MB must be between 1 and 50")
-
-        if self.openai_timeout_sec < 10 or self.openai_timeout_sec > 600:
-            errors.append("OPENAI_TIMEOUT_SEC must be between 10 and 600")
-
-        if self.extract_cache_ttl_sec < 1:
-            errors.append("EXTRACT_CACHE_TTL_SEC must be >= 1")
-
-        if self.extract_cache_max_entries < 1:
-            errors.append("EXTRACT_CACHE_MAX_ENTRIES must be >= 1")
+        # Validate supabase backend dependencies
+        if self.import_repository_backend == "supabase":
+            if not self.supabase_url:
+                errors.append("SUPABASE_URL required when import_repository_backend=supabase")
+            if not self.supabase_service_role_key:
+                errors.append(
+                    "SUPABASE_SERVICE_ROLE_KEY required when import_repository_backend=supabase"
+                )
 
         if self.app_env == "production":
             if not self.allowed_origins or not self.allowed_origins.strip():

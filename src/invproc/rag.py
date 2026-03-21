@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Literal, Optional, Protocol
 
 from openai import OpenAI
 
 from invproc.config import InvoiceConfig
 from invproc.repositories.base import (
     InvoiceImportRepository,
-    ProductCatalogEmbeddingRecord,
+    ProductCatalogEmbeddingMatch,
     ProductCatalogEmbeddingRecordInput,
     ProductSyncRecord,
 )
@@ -56,6 +57,45 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     return numerator / (left_norm * right_norm)
 
 
+def rrf_merge(
+    semantic_matches: list[ProductCatalogEmbeddingMatch],
+    lexical_matches: list[ProductCatalogEmbeddingMatch],
+    *,
+    k: int = 60,
+    top_k: int = 5,
+) -> list[ProductCatalogEmbeddingMatch]:
+    """Merge semantic and lexical result lists via Reciprocal Rank Fusion.
+
+    Deduplicates by product_id, keeping the first-seen match record for metadata.
+    The merged score is the sum of per-list RRF contributions.
+    """
+    scores: dict[str, float] = {}
+    records: dict[str, ProductCatalogEmbeddingMatch] = {}
+
+    for rank, match in enumerate(semantic_matches, start=1):
+        pid = match.product_id
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank)
+        records.setdefault(pid, match)
+
+    for rank, match in enumerate(lexical_matches, start=1):
+        pid = match.product_id
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank)
+        records.setdefault(pid, match)
+
+    sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[:top_k]
+    return [
+        ProductCatalogEmbeddingMatch(
+            product_id=records[pid].product_id,
+            product_snapshot_hash=records[pid].product_snapshot_hash,
+            embedding_model=records[pid].embedding_model,
+            embedding_text=records[pid].embedding_text,
+            metadata=records[pid].metadata,
+            score=scores[pid],
+        )
+        for pid in sorted_ids
+    ]
+
+
 class EmbeddingClient(Protocol):
     """Protocol for generating text embeddings."""
 
@@ -70,7 +110,10 @@ class OpenAIEmbeddingClient:
         self._config = config
         self._client: Optional[OpenAI] = None
         if not config.mock and config.openai_api_key:
-            self._client = OpenAI(api_key=config.openai_api_key, timeout=config.openai_timeout_sec)
+            self._client = OpenAI(
+                api_key=config.openai_api_key.get_secret_value(),
+                timeout=config.openai_timeout_sec,
+            )
 
     def embed(self, *, model: str, text: str) -> list[float]:
         if self._client is None:
@@ -126,6 +169,7 @@ class CatalogQueryResult:
     query: str
     embedding_model: str
     top_k: int
+    search_mode: str
     matches: list[CatalogRagMatch]
 
     @property
@@ -278,18 +322,53 @@ class CatalogRetrievalService:
         *,
         top_k: int = 5,
         embedding_model: Optional[str] = None,
+        mode: Literal["semantic", "lexical", "hybrid"] = "hybrid",
     ) -> CatalogQueryResult:
         model = embedding_model or self.default_embedding_model
-        query_embedding = self.embedding_client.embed(model=model, text=text)
-        matches = self.repository.search_product_catalog_embeddings(
-            query_embedding=query_embedding,
-            embedding_model=model,
-            top_k=top_k,
-        )
+
+        if mode == "lexical":
+            raw_matches = self.repository.search_product_catalog_embeddings_lexical(
+                query_text=text,
+                embedding_model=model,
+                top_k=top_k,
+            )
+        elif mode == "semantic":
+            query_embedding = self.embedding_client.embed(model=model, text=text)
+            raw_matches = self.repository.search_product_catalog_embeddings(
+                query_embedding=query_embedding,
+                embedding_model=model,
+                top_k=top_k,
+            )
+        else:
+            query_embedding = self.embedding_client.embed(model=model, text=text)
+
+            def _semantic() -> list[ProductCatalogEmbeddingMatch]:
+                return self.repository.search_product_catalog_embeddings(
+                    query_embedding=query_embedding,
+                    embedding_model=model,
+                    top_k=top_k,
+                )
+
+            def _lexical() -> list[ProductCatalogEmbeddingMatch]:
+                return self.repository.search_product_catalog_embeddings_lexical(
+                    query_text=text,
+                    embedding_model=model,
+                    top_k=top_k,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                fut_semantic = pool.submit(_semantic)
+                fut_lexical = pool.submit(_lexical)
+                semantic = fut_semantic.result()
+                lexical = fut_lexical.result()
+
+            raw_matches = rrf_merge(semantic, lexical, top_k=top_k)
+
         return CatalogQueryResult(
             query=text,
             embedding_model=model,
             top_k=top_k,
+            search_mode=mode,
             matches=[
                 CatalogRagMatch(
                     product_id=match.product_id,
@@ -299,7 +378,7 @@ class CatalogRetrievalService:
                     metadata=dict(match.metadata),
                     embedding_text=match.embedding_text,
                 )
-                for match in matches
+                for match in raw_matches
             ],
         )
 
@@ -354,6 +433,7 @@ def serialize_query_result(result: CatalogQueryResult) -> dict[str, Any]:
         "query": result.query,
         "embedding_model": result.embedding_model,
         "top_k": result.top_k,
+        "search_mode": result.search_mode,
         "matches": [
             {
                 "product_id": match.product_id,
@@ -435,17 +515,6 @@ def serialize_sync_status_snapshot(snapshot: CatalogSyncStatusSnapshot) -> dict[
         "oldest_processing_age_sec": snapshot.oldest_processing_age_sec,
         "repeated_failures": snapshot.repeated_failures,
     }
-
-
-def latest_embedding_model(
-    embeddings: list[ProductCatalogEmbeddingRecord],
-    fallback_model: str,
-) -> str:
-    """Return the newest available embedding model when records exist."""
-    if not embeddings:
-        return fallback_model
-    newest = max(embeddings, key=lambda record: record.updated_at)
-    return newest.embedding_model
 
 
 def build_rag_worker(

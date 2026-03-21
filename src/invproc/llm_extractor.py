@@ -1,5 +1,6 @@
 """LLM integration for invoice data extraction."""
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -39,7 +40,8 @@ class LLMExtractor:
         if not self.mock:
             if config.openai_api_key:
                 self.client = OpenAI(
-                    api_key=config.openai_api_key, timeout=config.openai_timeout_sec
+                    api_key=config.openai_api_key.get_secret_value(),
+                    timeout=config.openai_timeout_sec,
                 )
 
     def parse_with_llm(self, text_grid: str) -> InvoiceData:
@@ -82,8 +84,6 @@ Pay special attention to the column headers to correctly identify quantity vs pr
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
             )
-
-            import json
 
             content = completion.choices[0].message.content
             if content is None:

@@ -29,7 +29,9 @@ from invproc.rag import (
     CatalogSyncWorker,
     OpenAIEmbeddingClient,
     build_catalog_embedding_text,
+    rrf_merge,
 )
+from invproc.repositories.base import ProductCatalogEmbeddingMatch
 from invproc.repositories.base import ProductRecord, ProductSyncRecordInput, UpsertProductInput
 from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
@@ -358,7 +360,13 @@ def test_embedding_client_requires_api_key_when_not_in_mock_mode() -> None:
 
 
 def test_api_rag_endpoints_use_app_owned_repository() -> None:
-    config = InvoiceConfig(_env_file=None, mock=True, catalog_sync_enabled=True)
+    from pydantic import SecretStr
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
     resources = build_app_resources(config)
     app_instance = create_app(resources=resources)
     payload = InvoiceImportRequest.model_validate(
@@ -390,16 +398,16 @@ def test_api_rag_endpoints_use_app_owned_repository() -> None:
     with TestClient(app_instance) as client:
         sync_response = client.post(
             "/internal/rag/sync-pending?limit=10",
-            headers={"Authorization": "Bearer test-supabase-jwt"},
+            headers={"Authorization": "Bearer test-internal-key"},
         )
         query_response = client.post(
             "/internal/rag/query",
             json={"query": "greek yogurt order", "top_k": 5},
-            headers={"Authorization": "Bearer test-supabase-jwt"},
+            headers={"Authorization": "Bearer test-internal-key"},
         )
         status_response = client.get(
             "/internal/rag/status",
-            headers={"Authorization": "Bearer test-supabase-jwt"},
+            headers={"Authorization": "Bearer test-internal-key"},
         )
 
     assert sync_response.status_code == 200
@@ -411,7 +419,13 @@ def test_api_rag_endpoints_use_app_owned_repository() -> None:
 
 
 def test_api_rag_import_endpoint_runs_import_and_sync() -> None:
-    config = InvoiceConfig(_env_file=None, mock=True, catalog_sync_enabled=True)
+    from pydantic import SecretStr
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
     resources = build_app_resources(config)
     app_instance = create_app(resources=resources)
 
@@ -440,12 +454,12 @@ def test_api_rag_import_endpoint_runs_import_and_sync() -> None:
                 "sync_after_import": True,
                 "sync_limit": 10,
             },
-            headers={"Authorization": "Bearer test-supabase-jwt"},
+            headers={"Authorization": "Bearer test-internal-key"},
         )
         query_response = client.post(
             "/internal/rag/query",
             json={"query": "greek yogurt order", "top_k": 5},
-            headers={"Authorization": "Bearer test-supabase-jwt"},
+            headers={"Authorization": "Bearer test-internal-key"},
         )
 
     assert response.status_code == 200
@@ -453,6 +467,66 @@ def test_api_rag_import_endpoint_runs_import_and_sync() -> None:
     assert response.json()["sync"]["processed"] == 1
     assert query_response.status_code == 200
     assert query_response.json()["matches"][0]["product_id"] == "prod_1"
+
+
+def test_api_rag_eval_endpoint_returns_metrics() -> None:
+    from pydantic import SecretStr
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-EVAL",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-eval-test",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        eval_response = client.post(
+            "/internal/rag/eval",
+            json={
+                "cases": [
+                    {"query": "greek yogurt order", "expected_product_id": "prod_1"}
+                ]
+            },
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert eval_response.status_code == 200
+    body = eval_response.json()
+    assert body["total_queries"] == 1
+    assert body["top_1_hits"] == 1
+    assert body["top_1_hit_rate"] == 1.0
 
 
 def test_cli_rag_query_and_eval_surfaces_return_json(
@@ -790,3 +864,218 @@ def test_cli_rag_ingest_invoice_rejects_query_without_sync(tmp_path: Path) -> No
     normalized_output = strip_ansi(result.output)
     assert "Invalid value:" in normalized_output
     assert "requires --sync" in normalized_output
+
+
+# ---------------------------------------------------------------------------
+# Hybrid search tests
+# ---------------------------------------------------------------------------
+
+
+def test_lexical_search_finds_product_by_exact_barcode() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="8001480015630",
+        category="Dairy",
+        uom="bucket",
+    )
+    seed_synced_product(
+        repository,
+        product_id="prod_water",
+        name="Mineral Water",
+        barcode="999999",
+        category="Beverages",
+        uom="bottle",
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+    )
+
+    result = retrieval.query("8001480015630", top_k=5, mode="lexical")
+
+    assert result.search_mode == "lexical"
+    assert result.matches
+    assert result.matches[0].product_id == "prod_yogurt"
+
+
+def test_lexical_search_returns_empty_for_no_term_match() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+    )
+
+    result = retrieval.query("xyzzy-no-match-term", top_k=5, mode="lexical")
+
+    assert result.search_mode == "lexical"
+    assert result.matches == []
+
+
+def test_rrf_merge_combines_ranked_results() -> None:
+    def _match(product_id: str, score: float) -> ProductCatalogEmbeddingMatch:
+        return ProductCatalogEmbeddingMatch(
+            product_id=product_id,
+            product_snapshot_hash="hash",
+            embedding_model="text-embedding-3-small",
+            embedding_text=product_id,
+            metadata={},
+            score=score,
+        )
+
+    semantic = [_match("a", 0.95), _match("b", 0.80), _match("c", 0.60)]
+    lexical = [_match("b", 0.90), _match("d", 0.70), _match("a", 0.50)]
+
+    merged = rrf_merge(semantic, lexical, k=60, top_k=4)
+
+    ids = [m.product_id for m in merged]
+    # "b" appears in both lists at rank 2 (semantic) and rank 1 (lexical) → highest RRF
+    # "a" appears in both lists at rank 1 (semantic) and rank 3 (lexical)
+    assert ids[0] in {"a", "b"}
+    assert "b" in ids
+    assert "a" in ids
+    assert "d" in ids
+    assert len(merged) == 4
+    # scores are strictly RRF values, not original cosine scores
+    assert all(m.score < 1.0 for m in merged)
+
+
+def test_rrf_merge_deduplicates_by_product_id() -> None:
+    def _match(product_id: str) -> ProductCatalogEmbeddingMatch:
+        return ProductCatalogEmbeddingMatch(
+            product_id=product_id,
+            product_snapshot_hash="hash",
+            embedding_model="text-embedding-3-small",
+            embedding_text=product_id,
+            metadata={},
+            score=0.5,
+        )
+
+    semantic = [_match("x"), _match("y")]
+    lexical = [_match("x"), _match("z")]
+
+    merged = rrf_merge(semantic, lexical, k=60, top_k=5)
+
+    product_ids = [m.product_id for m in merged]
+    assert len(product_ids) == len(set(product_ids))
+    assert "x" in product_ids
+
+
+def test_hybrid_search_surface_returns_search_mode_field() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+    )
+
+    hybrid_result = retrieval.query("greek yogurt", top_k=5, mode="hybrid")
+    semantic_result = retrieval.query("greek yogurt", top_k=5, mode="semantic")
+    lexical_result = retrieval.query("greek yogurt", top_k=5, mode="lexical")
+
+    assert hybrid_result.search_mode == "hybrid"
+    assert semantic_result.search_mode == "semantic"
+    assert lexical_result.search_mode == "lexical"
+
+
+def test_api_rag_query_accepts_search_mode_field() -> None:
+    from pydantic import SecretStr
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-HYBRID",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-hybrid-mode",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        hybrid = client.post(
+            "/internal/rag/query",
+            json={"query": "greek yogurt", "top_k": 5, "search_mode": "hybrid"},
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        lexical = client.post(
+            "/internal/rag/query",
+            json={"query": "123456", "top_k": 5, "search_mode": "lexical"},
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert hybrid.status_code == 200
+    assert hybrid.json()["search_mode"] == "hybrid"
+    assert lexical.status_code == 200
+    assert lexical.json()["search_mode"] == "lexical"
+    assert lexical.json()["matches"][0]["product_id"] == "prod_1"
+
+
+def test_cli_rag_query_mode_flag_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+
+    result = runner.invoke(
+        app, ["rag", "query", "Greek Yogurt", "--mock", "--mode", "lexical"]
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["search_mode"] == "lexical"

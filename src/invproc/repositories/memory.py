@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from invproc.rag import cosine_similarity
 from invproc.repositories.base import (
     InvoiceImportRepository,
     ProductCatalogEmbeddingMatch,
@@ -16,6 +18,43 @@ from invproc.repositories.base import (
     ProductSyncRecordInput,
     UpsertProductInput,
 )
+
+
+def _bm25_scores(
+    query_text: str,
+    documents: list[str],
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> list[float]:
+    """Compute BM25 relevance scores for documents against a query."""
+    query_tokens = query_text.lower().split()
+    if not query_tokens or not documents:
+        return [0.0] * len(documents)
+
+    tokenized = [doc.lower().split() for doc in documents]
+    n = len(documents)
+    avgdl = sum(len(t) for t in tokenized) / n
+
+    df: dict[str, int] = {}
+    for doc_tokens in tokenized:
+        for token in set(doc_tokens):
+            df[token] = df.get(token, 0) + 1
+
+    scores: list[float] = []
+    for doc_tokens in tokenized:
+        tf_map: dict[str, int] = {}
+        for token in doc_tokens:
+            tf_map[token] = tf_map.get(token, 0) + 1
+        dl = len(doc_tokens)
+        score = 0.0
+        for token in query_tokens:
+            if token not in df:
+                continue
+            tf = tf_map.get(token, 0)
+            idf = math.log((n - df[token] + 0.5) / (df[token] + 0.5) + 1.0)
+            score += idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * dl / avgdl))
+        scores.append(score)
+    return scores
 
 
 class InMemoryInvoiceImportRepository(InvoiceImportRepository):
@@ -367,14 +406,6 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
-        def cosine_similarity(left: list[float], right: list[float]) -> float:
-            numerator = sum(a * b for a, b in zip(left, right, strict=True))
-            left_norm = sum(value * value for value in left) ** 0.5
-            right_norm = sum(value * value for value in right) ** 0.5
-            if left_norm == 0.0 or right_norm == 0.0:
-                return 0.0
-            return float(numerator / (left_norm * right_norm))
-
         records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
         matches = [
             ProductCatalogEmbeddingMatch(
@@ -389,6 +420,36 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
         ]
         matches.sort(key=lambda match: match.score, reverse=True)
         return matches[:top_k]
+
+    def search_product_catalog_embeddings_lexical(
+        self,
+        *,
+        query_text: str,
+        embedding_model: str,
+        top_k: int,
+    ) -> list[ProductCatalogEmbeddingMatch]:
+        records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
+        if not records:
+            return []
+        documents = [record.embedding_text for record in records]
+        scores = _bm25_scores(query_text, documents)
+        ranked = sorted(
+            zip(records, scores),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        return [
+            ProductCatalogEmbeddingMatch(
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                embedding_text=record.embedding_text,
+                metadata=dict(record.metadata),
+                score=score,
+            )
+            for record, score in ranked[:top_k]
+            if score > 0.0
+        ]
 
     def list_product_sync_records(self) -> list[ProductSyncRecord]:
         """Return sync rows in insertion order for tests."""

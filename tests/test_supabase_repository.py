@@ -192,6 +192,33 @@ class FakeSupabaseClient:
             scored.sort(key=lambda row: row["score"], reverse=True)
             return scored[: params["p_match_count"]]
 
+        if fn_name == "search_product_catalog_embeddings_lexical":
+            rows = [
+                row
+                for row in self.rows["product_catalog_embeddings"]
+                if row["embedding_model"] == params["p_embedding_model"]
+            ]
+            query_tokens = params["p_query_text"].lower().split()
+
+            def _term_overlap(text: str) -> float:
+                tokens = text.lower().split()
+                return sum(1.0 for t in query_tokens if t in tokens)
+
+            scored = [
+                {
+                    "product_id": row["product_id"],
+                    "product_snapshot_hash": row["product_snapshot_hash"],
+                    "embedding_model": row["embedding_model"],
+                    "embedding_text": row["embedding_text"],
+                    "metadata": row["metadata"],
+                    "score": _term_overlap(row["embedding_text"]),
+                }
+                for row in rows
+            ]
+            scored = [s for s in scored if s["score"] > 0.0]
+            scored.sort(key=lambda row: row["score"], reverse=True)
+            return scored[: params["p_match_count"]]
+
         raise AssertionError(f"Unsupported RPC: {fn_name}")
 
     def _prepare_row(self, table_name: str, payload: dict[str, Any]) -> dict[str, Any]:

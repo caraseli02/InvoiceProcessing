@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, cast
+
+from supabase import Client
 
 from invproc.import_service import normalize_name
 from invproc.repositories.base import (
@@ -46,7 +48,7 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
 
     def __init__(
         self,
-        client: Any,
+        client: Client,
         *,
         products_table: str = "products",
         stock_movements_table: str = "stock_movements",
@@ -167,12 +169,16 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
     def create_or_reuse_product_sync(
         self, data: ProductSyncRecordInput
     ) -> tuple[ProductSyncRecord, bool]:
-        result = self.client.rpc(
-            "create_or_reuse_product_sync_row",
-            self._product_sync_input_payload(data),
-        ).execute().data[0]
+        raw = cast(
+            list[dict[str, Any]],
+            self.client.rpc(
+                "create_or_reuse_product_sync_row",
+                self._product_sync_input_payload(data),
+            ).execute().data,
+        )
+        result: dict[str, Any] = dict(raw[0])
         created = bool(result.pop("created", False))
-        return self._map_product_sync(dict(result)), created
+        return self._map_product_sync(result), created
 
     def claim_next_product_sync(
         self,
@@ -181,14 +187,17 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         now: datetime,
         lease_timeout: timedelta,
     ) -> Optional[ProductSyncRecord]:
-        rows = self.client.rpc(
-            "claim_next_product_sync_row",
-            {
-                "p_worker_id": worker_id,
-                "p_now": now.isoformat(),
-                "p_lease_timeout_seconds": int(lease_timeout.total_seconds()),
-            },
-        ).execute().data
+        rows = cast(
+            list[dict[str, Any]],
+            self.client.rpc(
+                "claim_next_product_sync_row",
+                {
+                    "p_worker_id": worker_id,
+                    "p_now": now.isoformat(),
+                    "p_lease_timeout_seconds": int(lease_timeout.total_seconds()),
+                },
+            ).execute().data,
+        )
         if not rows:
             return None
         return self._map_product_sync(dict(rows[0]))
@@ -257,11 +266,14 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             "metadata": data.metadata,
             "updated_at": _utcnow().isoformat(),
         }
-        row = self.client.table(self.embeddings_table).upsert(
-            payload,
-            on_conflict="product_id,product_snapshot_hash,embedding_model",
-        ).execute().data[0]
-        return self._map_product_catalog_embedding(row)
+        rows = cast(
+            list[dict[str, Any]],
+            self.client.table(self.embeddings_table).upsert(
+                payload,  # type: ignore[arg-type]
+                on_conflict="product_id,product_snapshot_hash,embedding_model",
+            ).execute().data,
+        )
+        return self._map_product_catalog_embedding(rows[0])
 
     def list_product_catalog_embeddings(
         self,
@@ -283,14 +295,47 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
-        rows = self.client.rpc(
-            "match_product_catalog_embeddings",
-            {
-                "p_query_embedding": query_embedding,
-                "p_embedding_model": embedding_model,
-                "p_match_count": top_k,
-            },
-        ).execute().data
+        rows = cast(
+            list[dict[str, Any]],
+            self.client.rpc(
+                "match_product_catalog_embeddings",
+                {
+                    "p_query_embedding": query_embedding,
+                    "p_embedding_model": embedding_model,
+                    "p_match_count": top_k,
+                },
+            ).execute().data,
+        )
+        return [
+            ProductCatalogEmbeddingMatch(
+                product_id=str(row["product_id"]),
+                product_snapshot_hash=str(row["product_snapshot_hash"]),
+                embedding_model=str(row["embedding_model"]),
+                embedding_text=str(row["embedding_text"]),
+                metadata=dict(row["metadata"]),
+                score=float(row["score"]),
+            )
+            for row in rows
+        ]
+
+    def search_product_catalog_embeddings_lexical(
+        self,
+        *,
+        query_text: str,
+        embedding_model: str,
+        top_k: int,
+    ) -> list[ProductCatalogEmbeddingMatch]:
+        rows = cast(
+            list[dict[str, Any]],
+            self.client.rpc(
+                "search_product_catalog_embeddings_lexical",
+                {
+                    "p_query_text": query_text,
+                    "p_embedding_model": embedding_model,
+                    "p_match_count": top_k,
+                },
+            ).execute().data,
+        )
         return [
             ProductCatalogEmbeddingMatch(
                 product_id=str(row["product_id"]),
@@ -315,11 +360,14 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             query = query.eq(field, value)
         if limit is not None:
             query = query.limit(limit)
-        return list(query.execute().data)
+        return cast(list[dict[str, Any]], query.execute().data)
 
     def _insert_one(self, table_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        row = self.client.table(table_name).insert(payload).execute().data[0]
-        return dict(row)
+        rows = cast(
+            list[dict[str, Any]],
+            self.client.table(table_name).insert(payload).execute().data,  # type: ignore[arg-type]
+        )
+        return dict(rows[0])
 
     def _update_one(
         self,
@@ -328,10 +376,10 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         *,
         filters: list[tuple[str, Any]],
     ) -> dict[str, Any]:
-        query = self.client.table(table_name).update(payload)
+        query = self.client.table(table_name).update(payload)  # type: ignore[arg-type]
         for field, value in filters:
             query = query.eq(field, value)
-        rows = query.execute().data
+        rows = cast(list[dict[str, Any]], query.execute().data)
         if not rows:
             raise KeyError(f"No row found in {table_name} for filters={filters!r}")
         return dict(rows[0])

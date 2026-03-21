@@ -9,9 +9,12 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
+from pydantic import SecretStr
+
 from invproc.auth import (
     SupabaseClientProvider,
     fetch_supabase_user,
+    verify_internal_caller,
     verify_supabase_jwt,
 )
 from invproc.config import InvoiceConfig
@@ -25,10 +28,8 @@ def test_supabase_client_provider_requires_configured_credentials(
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     provider = SupabaseClientProvider(InvoiceConfig(_env_file=None, mock=True))
 
-    with pytest.raises(HTTPException, match="Authentication service is not configured") as exc:
+    with pytest.raises(RuntimeError, match="Authentication service is not configured"):
         provider.get_client()
-
-    assert exc.value.status_code == 500
 
 
 def test_supabase_client_provider_caches_created_client(
@@ -49,7 +50,7 @@ def test_supabase_client_provider_caches_created_client(
             _env_file=None,
             mock=True,
             supabase_url="https://example.supabase.co",
-            supabase_service_role_key="service-role",
+            supabase_service_role_key=SecretStr("service-role"),
         )
     )
 
@@ -100,7 +101,7 @@ def test_verify_supabase_jwt_allows_configured_api_key_bypass(
         )
     )
 
-    assert result == {"id": "api-key-user", "auth": "api_key"}
+    assert result == {"id": "api-key-user", "auth": "api_key"}  # first test
 
 
 def test_verify_supabase_jwt_api_key_bypass_skips_unconfigured_supabase_provider(
@@ -129,3 +130,71 @@ def test_verify_supabase_jwt_api_key_bypass_skips_unconfigured_supabase_provider
     )
 
     assert result == {"id": "api-key-user", "auth": "api_key"}
+
+
+def test_verify_internal_caller_accepts_configured_internal_key() -> None:
+    """Valid internal API key returns internal-caller identity."""
+    result = asyncio.run(
+        verify_internal_caller(
+            credentials=HTTPAuthorizationCredentials(
+                scheme="Bearer",
+                credentials="internal-secret",
+            ),
+            config=InvoiceConfig(
+                _env_file=None,
+                mock=True,
+                internal_api_keys=SecretStr("internal-secret,another-key"),
+            ),
+        )
+    )
+    assert result == {"id": "internal-caller", "auth": "internal_api_key"}
+
+
+def test_verify_internal_caller_rejects_unknown_token() -> None:
+    """Unknown token should return 403."""
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            verify_internal_caller(
+                credentials=HTTPAuthorizationCredentials(
+                    scheme="Bearer",
+                    credentials="supabase-jwt-token",
+                ),
+                config=InvoiceConfig(
+                    _env_file=None,
+                    mock=True,
+                    internal_api_keys=SecretStr("internal-secret"),
+                ),
+            )
+        )
+    assert exc.value.status_code == 403
+
+
+def test_verify_internal_caller_rejects_missing_token() -> None:
+    """Missing credentials should return 401."""
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            verify_internal_caller(
+                credentials=None,
+                config=InvoiceConfig(
+                    _env_file=None,
+                    mock=True,
+                    internal_api_keys=SecretStr("internal-secret"),
+                ),
+            )
+        )
+    assert exc.value.status_code == 401
+
+
+def test_verify_internal_caller_rejects_unconfigured_internal_keys() -> None:
+    """When no internal_api_keys are configured, return 403."""
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            verify_internal_caller(
+                credentials=HTTPAuthorizationCredentials(
+                    scheme="Bearer",
+                    credentials="any-token",
+                ),
+                config=InvoiceConfig(_env_file=None, mock=True),
+            )
+        )
+    assert exc.value.status_code == 403
