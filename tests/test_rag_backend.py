@@ -1079,3 +1079,244 @@ def test_cli_rag_query_mode_flag_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["search_mode"] == "lexical"
+
+
+def _make_retrieval(repository: InMemoryInvoiceImportRepository) -> CatalogRetrievalService:
+    return CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+    )
+
+
+def test_evaluator_supports_mode_param() -> None:
+    """evaluate() with explicit mode records the mode in each case result."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(repository, product_id="prod_yogurt", name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket")
+    evaluator = CatalogRagEvaluator(_make_retrieval(repository))
+
+    result = evaluator.evaluate(
+        [CatalogEvalCase(query="yogurt from metro", expected_product_id="prod_yogurt")],
+        mode="semantic",
+    )
+
+    assert result.cases[0]["search_mode"] == "semantic"
+
+
+def test_evaluator_expected_name_substring_match() -> None:
+    """expected_name triggers a case-insensitive embedding_text substring match."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(repository, product_id="prod_yogurt", name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket")
+    evaluator = CatalogRagEvaluator(_make_retrieval(repository))
+
+    result = evaluator.evaluate(
+        [CatalogEvalCase(query="yogurt", expected_name="greek yogurt")],
+        mode="hybrid",
+    )
+
+    assert result.top_5_hits == 1
+
+
+def test_evaluator_expected_name_case_insensitive() -> None:
+    """expected_name match is case-insensitive."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(repository, product_id="p1", name="Mineral Water", barcode="999", category="Bev", uom="bottle")
+    evaluator = CatalogRagEvaluator(_make_retrieval(repository))
+
+    result = evaluator.evaluate(
+        [CatalogEvalCase(query="water", expected_name="MINERAL WATER")],
+        mode="semantic",
+    )
+
+    assert result.top_5_hits == 1
+
+
+def test_eval_case_requires_at_least_one_identifier() -> None:
+    """CatalogEvalCase raises ValueError when both expected fields are empty."""
+    with pytest.raises(ValueError, match="expected_product_id or expected_name"):
+        CatalogEvalCase(query="anything")
+
+
+def test_evaluate_all_modes_returns_comparison_for_all_three() -> None:
+    """evaluate_all_modes() populates semantic, lexical, and hybrid results."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(repository, product_id="prod_yogurt", name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket")
+    evaluator = CatalogRagEvaluator(_make_retrieval(repository))
+    cases = [CatalogEvalCase(query="greek yogurt", expected_product_id="prod_yogurt")]
+
+    comparison = evaluator.evaluate_all_modes(cases)
+
+    assert comparison.semantic.total_queries == 1
+    assert comparison.lexical.total_queries == 1
+    assert comparison.hybrid.total_queries == 1
+    assert comparison.semantic.cases[0]["search_mode"] == "semantic"
+    assert comparison.lexical.cases[0]["search_mode"] == "lexical"
+    assert comparison.hybrid.cases[0]["search_mode"] == "hybrid"
+
+
+def test_serialize_mode_comparison_structure() -> None:
+    """serialize_mode_comparison produces summary + by_mode sections."""
+    from invproc.rag import (
+        CatalogEvalResult,
+        CatalogModeComparisonResult,
+        serialize_mode_comparison,
+    )
+
+    empty = CatalogEvalResult(total_queries=0, top_1_hits=0, top_5_hits=0, cases=[])
+    comparison = CatalogModeComparisonResult(semantic=empty, lexical=empty, hybrid=empty)
+
+    out = serialize_mode_comparison(comparison)
+
+    assert set(out["summary"]) == {"semantic", "lexical", "hybrid"}
+    assert set(out["by_mode"]) == {"semantic", "lexical", "hybrid"}
+    for mode_key in ("semantic", "lexical", "hybrid"):
+        assert "top_1_hit_rate" in out["summary"][mode_key]
+
+
+def test_cli_eval_all_modes_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--all-modes flag triggers multi-mode comparison output."""
+    configure_cli_for_memory_backend(monkeypatch)
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(repository, product_id="prod_yogurt", name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket")
+
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+
+    result = runner.invoke(app, ["rag", "eval", str(fixture), "--mock", "--all-modes"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "summary" in payload
+    assert set(payload["summary"]) == {"semantic", "lexical", "hybrid"}
+
+
+def test_cli_eval_mode_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--mode flag selects a specific search mode for single-mode eval."""
+    configure_cli_for_memory_backend(monkeypatch)
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(repository, product_id="prod_yogurt", name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket")
+
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+
+    result = runner.invoke(app, ["rag", "eval", str(fixture), "--mock", "--mode", "lexical"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["cases"][0]["search_mode"] == "lexical"
+
+
+def test_cli_eval_invalid_mode_exits_with_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An invalid --mode value exits with code 1."""
+    configure_cli_for_memory_backend(monkeypatch)
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+
+    result = runner.invoke(app, ["rag", "eval", str(fixture), "--mock", "--mode", "bad-mode"])
+
+    assert result.exit_code == 1
+
+
+def test_match_threshold_filters_low_score_results() -> None:
+    """A threshold above all RRF scores should produce an empty match list."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+    # RRF scores are always < 1.0 (they are rank-based fractions).
+    # Setting threshold=1.0 guarantees all matches are pruned.
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+        match_threshold=1.0,
+    )
+
+    result = retrieval.query("greek yogurt", top_k=5)
+
+    assert result.match_threshold == 1.0
+    assert result.matches == []
+
+
+def test_match_threshold_zero_returns_all_results() -> None:
+    """Default threshold of 0.0 must not filter any matches."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+        match_threshold=0.0,
+    )
+
+    result = retrieval.query("greek yogurt", top_k=5)
+
+    assert result.match_threshold == 0.0
+    assert result.matches  # at least one match when threshold is open
+
+
+def test_per_call_threshold_overrides_service_default() -> None:
+    """A per-call threshold keyword overrides the service-level default."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        default_embedding_model="text-embedding-3-small",
+        match_threshold=0.0,
+    )
+
+    # Service default is 0.0 (open) but we override with 1.0 (prune all).
+    result = retrieval.query("greek yogurt", top_k=5, match_threshold=1.0)
+
+    assert result.match_threshold == 1.0
+    assert result.matches == []
+
+
+def test_serialize_query_result_includes_match_threshold() -> None:
+    """serialize_query_result must expose match_threshold for API consumers."""
+    from invproc.rag import CatalogQueryResult, CatalogRagMatch, serialize_query_result
+
+    result = CatalogQueryResult(
+        query="yogurt",
+        embedding_model="text-embedding-3-small",
+        top_k=5,
+        search_mode="hybrid",
+        match_threshold=0.05,
+        matches=[
+            CatalogRagMatch(
+                product_id="p1",
+                product_snapshot_hash="h1",
+                embedding_model="text-embedding-3-small",
+                score=0.1,
+                metadata={},
+                embedding_text="yogurt",
+            )
+        ],
+    )
+
+    serialized = serialize_query_result(result)
+
+    assert serialized["match_threshold"] == 0.05
+    assert len(serialized["matches"]) == 1

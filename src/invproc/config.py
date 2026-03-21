@@ -261,6 +261,18 @@ class InvoiceConfig(BaseSettings):
         description="Embedding model identifier stored on emitted catalog sync rows",
     )
 
+    rag_match_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum retrieval score to include a match. "
+            "0.0 means no filtering (all top-K results returned). "
+            "For hybrid/RRF mode useful range is 0.01–0.05; "
+            "for semantic-only (cosine) typical range is 0.5–0.8."
+        ),
+    )
+
     def create_output_dirs(self) -> Path:
         """Ensure output directories exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)

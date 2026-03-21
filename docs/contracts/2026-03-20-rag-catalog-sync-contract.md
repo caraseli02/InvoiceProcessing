@@ -1,7 +1,7 @@
 # RAG Catalog Sync Contract
 
 Date: 2026-03-20
-Status: updated for Phase 3 backend-owned RAG
+Status: updated for Phase 5 retrieval quality validation
 Related plans:
 - `docs/plans/2026-03-20-001-feat-rag-whatsapp-catalog-sync-plan.md`
 - `docs/plans/2026-03-20-002-feat-rag-whatsapp-catalog-sync-phase-3-backend-rag-plan.md`
@@ -399,11 +399,42 @@ Failure signals:
 - repeated failures for the same worker or model
 - imported products missing from top-5 retrieval results
 
+## Freshness SLO
+
+The target window from successful product import to searchable catalog vector is **5 minutes** under normal operating conditions.
+
+This window assumes:
+- the sync worker is running continuously or on a scheduled loop
+- the embedding API (OpenAI) is reachable with normal latency
+- the `product_embedding_sync` claim-and-process cycle completes within one loop iteration
+
+Healthy signal: a product imported via `invproc rag ingest-invoice` or `/invoice/import` is returned in `rag query` results within 5 minutes.
+
+Failure signal: `product_embedding_sync` rows remain in `pending` or `processing` beyond 10 minutes after import. Check worker health and embedding API reachability.
+
+## Retrieval Tuning Parameters
+
+These are configurable at runtime via `InvoiceConfig`:
+
+| Parameter | Config field | Default | Notes |
+| --- | --- | --- | --- |
+| Top-K | `rag_top_k` (CLI `--top-k`) | `5` | Number of matches returned per query |
+| Match threshold | `rag_match_threshold` | `0.0` | Minimum score to include a match. `0.0` = no filtering. Raise to prune low-confidence results. |
+| Search mode | `--mode` CLI flag / `mode` API param | `hybrid` | `semantic`, `lexical`, or `hybrid` (RRF) |
+
+Threshold guidance:
+- RRF scores are not probabilities. For hybrid mode, useful filtering typically starts around `0.01`–`0.05`.
+- For semantic-only (cosine similarity), typical useful range is `0.5`–`0.8`.
+- Default `0.0` preserves backward-compatible behavior: all top-K matches are returned regardless of score.
+
 ## Scope Boundary
 
 This contract intentionally does not define:
 
 - WhatsApp conversation orchestration
 - frontend rendering details
-- hybrid retrieval or reranking
 - product delete/tombstone handling
+
+Previously excluded but now shipped (Phase 4, PR #29):
+- hybrid retrieval: BM25 lexical + pgvector semantic + Reciprocal Rank Fusion merging
+- `search_mode` field in all retrieval responses (`semantic`, `lexical`, `hybrid`)

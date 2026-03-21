@@ -1,12 +1,80 @@
 {
+  "description": "Representative WhatsApp-style catalog queries for RAG evaluation. Update expected_product_id values with real Supabase UUIDs once catalog is populated from invoice imports. Use expected_name for name-based matching when UUIDs are unknown.",
   "queries": [
     {
       "query": "need greek yogurt for metro order",
-      "expected_product_id": "prod_yogurt"
+      "expected_product_id": "prod_yogurt",
+      "notes": "Fuzzy natural-language: product name with context words."
     },
     {
       "query": "please add orange juice carton",
-      "expected_product_id": "prod_juice"
+      "expected_product_id": "prod_juice",
+      "notes": "Fuzzy natural-language: product category + packaging."
+    },
+    {
+      "query": "iaurt grecesc metro",
+      "expected_name": "yogurt",
+      "notes": "Romanian product name (iaurt grecesc = Greek yogurt). Tests multilingual fuzzy match."
+    },
+    {
+      "query": "suc de portocale",
+      "expected_name": "juice",
+      "notes": "Romanian: suc de portocale = orange juice. Tests non-English product phrase."
+    },
+    {
+      "query": "re-comanda laptele de la saptamana trecuta",
+      "expected_name": "lapte",
+      "notes": "Romanian order repetition phrase: re-order the milk from last week. Tests fluffy intent phrasing."
+    },
+    {
+      "query": "8001480015630",
+      "expected_name": "yogurt",
+      "notes": "Exact EAN-13 barcode lookup. Lexical mode should excel here; hybrid should also catch it."
+    },
+    {
+      "query": "cod 8001480015630",
+      "expected_name": "yogurt",
+      "notes": "Romanian barcode prefix (cod = code) + EAN. Tests prefix-bearing barcode query."
+    },
+    {
+      "query": "apa minerala 1.5L",
+      "expected_name": "apa",
+      "notes": "Romanian: mineral water 1.5L. Tests category + size abbreviation."
+    },
+    {
+      "query": "biscuiti digestivi",
+      "expected_name": "biscuit",
+      "notes": "Romanian: digestive biscuits. Category-level fuzzy match."
+    },
+    {
+      "query": "ulei floarea soarelui 1L",
+      "expected_name": "ulei",
+      "notes": "Romanian: sunflower oil 1L. Tests oil category with Romanian name."
+    },
+    {
+      "query": "faina alba 1kg",
+      "expected_name": "faina",
+      "notes": "Romanian: white flour 1kg. Tests commodity product with unit."
+    },
+    {
+      "query": "zahar tos 1kg metro",
+      "expected_name": "zahar",
+      "notes": "Romanian: granulated sugar 1kg METRO. Tests brand context word alongside product."
+    },
+    {
+      "query": "cascaval telemea",
+      "expected_name": "cascaval",
+      "notes": "Romanian cheese variant name. Tests partial product type match."
+    },
+    {
+      "query": "detergent vase fairy",
+      "expected_name": "detergent",
+      "notes": "Romanian: dish detergent Fairy brand. Tests brand name alongside category."
+    },
+    {
+      "query": "pui intreg congelat",
+      "expected_name": "pui",
+      "notes": "Romanian: whole frozen chicken. Tests meat category with preparation state."
     }
   ]
 }
