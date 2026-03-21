@@ -26,8 +26,10 @@ def main(
         import uvicorn
 
         config = get_config()
+        from invproc.api import create_app
+
         uvicorn.run(
-            "invproc.api:create_app",
+            create_app,
             host=config.api_host,
             port=config.api_port,
             reload=False,

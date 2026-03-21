@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from invproc.api import create_app
-from invproc.auth import SupabaseClientProvider, get_supabase_client
+from invproc.auth import SupabaseClientProvider
 from invproc.catalog_sync import NoopCatalogSyncProducer
 from invproc.config import InvoiceConfig
 from invproc.dependencies import AppResources, get_app_config, get_extract_cache
@@ -81,7 +81,6 @@ def api_test_app(
     app = create_app(resources=resources)
     app.dependency_overrides[get_app_config] = lambda: api_test_config
     app.dependency_overrides[get_extract_cache] = lambda: api_test_extract_cache
-    app.dependency_overrides[get_supabase_client] = lambda: object()
     try:
         yield app
     finally:

@@ -281,26 +281,26 @@ class CatalogRetrievalService:
     ) -> CatalogQueryResult:
         model = embedding_model or self.default_embedding_model
         query_embedding = self.embedding_client.embed(model=model, text=text)
-        records = self.repository.list_product_catalog_embeddings(embedding_model=model)
-        scored: list[CatalogRagMatch] = []
-        for record in records:
-            scored.append(
-                CatalogRagMatch(
-                    product_id=record.product_id,
-                    product_snapshot_hash=record.product_snapshot_hash,
-                    embedding_model=record.embedding_model,
-                    score=cosine_similarity(query_embedding, record.embedding),
-                    metadata=dict(record.metadata),
-                    embedding_text=record.embedding_text,
-                )
-            )
-
-        scored.sort(key=lambda match: match.score, reverse=True)
+        matches = self.repository.search_product_catalog_embeddings(
+            query_embedding=query_embedding,
+            embedding_model=model,
+            top_k=top_k,
+        )
         return CatalogQueryResult(
             query=text,
             embedding_model=model,
             top_k=top_k,
-            matches=scored[:top_k],
+            matches=[
+                CatalogRagMatch(
+                    product_id=match.product_id,
+                    product_snapshot_hash=match.product_snapshot_hash,
+                    embedding_model=match.embedding_model,
+                    score=match.score,
+                    metadata=dict(match.metadata),
+                    embedding_text=match.embedding_text,
+                )
+                for match in matches
+            ],
         )
 
 

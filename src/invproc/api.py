@@ -50,6 +50,7 @@ from invproc.import_service import InvoiceImportService
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 from invproc.models import (
     InvoiceData,
+    InvoiceImportRequest,
     InvoicePreviewPricingRequest,
     InvoicePreviewPricingResponse,
 )
@@ -68,6 +69,7 @@ from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
 from invproc.repositories.base import InvoiceImportRepository
 from invproc.repositories.memory import InMemoryInvoiceImportRepository
+from invproc.repositories.supabase import SupabaseInvoiceImportRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,6 +80,15 @@ class CatalogQueryRequest(BaseModel):
 
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+
+
+class CatalogImportRequest(BaseModel):
+    """Request payload for backend import + optional sync."""
+
+    idempotency_key: str = Field(min_length=1)
+    payload: InvoiceImportRequest
+    sync_after_import: bool = Field(default=True)
+    sync_limit: int = Field(default=100, ge=1, le=1000)
 
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
@@ -106,7 +117,13 @@ def build_app_resources(config: InvoiceConfig) -> AppResources:
         max_entries=config.extract_cache_max_entries,
     )
     supabase_client_provider = SupabaseClientProvider(config)
-    import_repository = InMemoryInvoiceImportRepository()
+    import_repository: InvoiceImportRepository
+    if config.import_repository_backend == "supabase":
+        import_repository = SupabaseInvoiceImportRepository(
+            supabase_client_provider.get_client(),
+        )
+    else:
+        import_repository = InMemoryInvoiceImportRepository()
     if config.catalog_sync_enabled:
         catalog_sync_producer: CatalogSyncProducer = RepositoryCatalogSyncProducer(
             import_repository,
@@ -311,6 +328,36 @@ async def preview_invoice_pricing(
 
 
 @router.post(
+    "/internal/rag/import",
+    status_code=status.HTTP_200_OK,
+    responses={401: {"description": "Invalid or expired token"}},
+)
+async def import_catalog_rows(
+    request: Request,
+    payload: CatalogImportRequest,
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    import_service: InvoiceImportService = Depends(get_import_service),
+    worker: CatalogSyncWorker = Depends(get_rag_worker),
+) -> dict[str, Any]:
+    """Import catalog rows and optionally process sync work through the API surface."""
+    _ = request
+    _ = user
+    import_response = await run_in_threadpool(
+        import_service.import_rows,
+        payload.payload,
+        idempotency_key=payload.idempotency_key,
+    )
+    response: dict[str, Any] = {"import": import_response.model_dump(mode="json")}
+    if payload.sync_after_import:
+        results = await run_in_threadpool(worker.sync_pending, limit=payload.sync_limit)
+        response["sync"] = {
+            "processed": len(results),
+            "results": [result.__dict__ for result in results],
+        }
+    return response
+
+
+@router.post(
     "/internal/rag/sync-pending",
     status_code=status.HTTP_200_OK,
     responses={401: {"description": "Invalid or expired token"}},
@@ -442,6 +489,7 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.add_exception_handler(ContractError, contract_error_handler)
     return app
+
 
 def main() -> None:
     """Run API server."""

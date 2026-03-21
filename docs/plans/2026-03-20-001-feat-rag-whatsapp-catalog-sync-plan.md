@@ -208,7 +208,33 @@ Estimated effort:
 
 - 1-2 days
 
-#### Phase 4: Validate retrieval quality and operational behavior
+#### Phase 4: Add invoice-to-catalog ingestion path for real RAG population
+
+Deliverables:
+
+- add a runtime path that turns real invoice input into persisted product catalog rows
+- ensure the ingestion path triggers the existing sync-row producer for created/updated products
+- support backend-only testing from a real invoice PDF to searchable vectors
+- expose the minimal entrypoint needed for local and future app usage, such as:
+  - a new HTTP import endpoint, or
+  - a backend CLI/admin flow that runs extract -> import -> sync
+- initial implementation choice: ship a backend CLI/admin flow first via `python -m invproc rag ingest-invoice <pdf> [--query "..."]`
+- next point of Phase 4: replace per-process in-memory sync/vector state with a shared Supabase-backed repository so CLI and API retrieval operate on the same durable store
+
+Success criteria:
+
+- a real invoice file can produce persisted product rows without test-only seeding
+- successful product imports create `product_embedding_sync` rows
+- running the worker after import makes the imported products queryable via backend RAG
+- the vector store is no longer dependent on seeded demo data for validation
+- imported products remain queryable after the CLI process exits or the API restarts
+- `/internal/rag/query` can return products previously imported by CLI or API runs once both use the shared backend store
+
+Estimated effort:
+
+- 1-2 days
+
+#### Phase 5: Validate retrieval quality and operational behavior
 
 Deliverables:
 
@@ -234,10 +260,12 @@ Ship this in a deliberately narrow order:
 
 1. **Schema + producer only** — record sync intents, but do not yet block on consumer readiness.
 2. **Backend consumer + exact semantic retrieval** — prove freshness and basic relevance first in this repo.
-3. **Evaluation tuning** — tune threshold/top-K with real WhatsApp phrases before wiring React.
-4. **React integration** — connect the webapp only after retrieval quality is good enough.
-5. **Hybrid retrieval if needed** — add keyword/SKU fusion only if evaluation shows semantic-only misses.
-6. **Indexing/scale work** — add vector indexes and retrieval optimizations when catalog size or latency justifies them.
+3. **Real ingestion path** — make real invoice imports populate the catalog and sync queue without seed-only setup.
+4. **Phase 4 persistence step** — replace in-memory validation state so CLI and API share one durable Supabase-backed vector store.
+5. **Evaluation tuning** — tune threshold/top-K with real WhatsApp phrases before wiring React.
+6. **React integration** — connect the webapp only after retrieval quality is good enough.
+7. **Hybrid retrieval if needed** — add keyword/SKU fusion only if evaluation shows semantic-only misses.
+8. **Indexing/scale work** — add vector indexes and retrieval optimizations when catalog size or latency justifies them.
 
 ## Alternative Approaches Considered
 
@@ -394,9 +422,9 @@ Known limitation:
 
 The next implementation decision should be:
 
-**Define the sync-table schema and worker contract first.**
+**Complete the persistent-storage step inside Phase 4 by making CLI and API share one Supabase-backed repository for products, sync rows, and vectors.**
 
-Do not start with webhook signing, HTTP retries, or hybrid retrieval. Those are second-order concerns compared with getting the persistence boundary, replay behavior, and ownership split correct.
+Do not start with React wiring or hybrid retrieval before CLI and API share the same persistent store. The next highest-value step is closing the gap between local in-memory validation and the actual Supabase contract already defined in `docs/contracts/2026-03-20-rag-catalog-sync-contract.md`.
 
 ## Resource Requirements
 

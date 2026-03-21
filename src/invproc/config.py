@@ -205,6 +205,11 @@ class InvoiceConfig(BaseSettings):
         description="Supabase service role key for server-side token verification",
     )
 
+    import_repository_backend: Literal["memory", "supabase"] = Field(
+        default="memory",
+        description="Repository backend for invoice import, sync rows, and vector persistence.",
+    )
+
     fx_lei_to_eur: float = Field(
         default=19.5,
         gt=0,
