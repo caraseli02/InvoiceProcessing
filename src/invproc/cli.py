@@ -1,5 +1,6 @@
 """CLI interface for invoice processing."""
 
+import dataclasses
 import json
 import logging
 import time
@@ -165,8 +166,6 @@ def process(
             if output_file:
                 _save_output(results[-1], output_file)
             else:
-                import json
-
                 print(json.dumps(results[-1].model_dump(mode="json"), indent=2))
 
         else:
@@ -174,8 +173,6 @@ def process(
             if output_file:
                 _save_output(result, output_file)
             else:
-                import json
-
                 print(json.dumps(result.model_dump(mode="json"), indent=2))
 
             elapsed = time.time() - start_time
@@ -396,6 +393,11 @@ def rag_ingest_invoice(
         min=1,
         help="Number of semantic matches to return when --query is used.",
     ),
+    query_mode: str = typer.Option(
+        "hybrid",
+        "--query-mode",
+        help="Search mode for --query: semantic | lexical | hybrid (default: hybrid).",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -462,12 +464,14 @@ def rag_ingest_invoice(
         results = worker.sync_pending(limit=limit)
         sync_payload = {
             "processed": len(results),
-            "results": [result.__dict__ for result in results],
+            "results": [dataclasses.asdict(result) for result in results],
         }
         payload["sync"] = sync_payload
 
     if query is not None:
-        query_payload = serialize_query_result(retrieval_service.query(query, top_k=top_k))
+        query_payload = serialize_query_result(
+            retrieval_service.query(query, top_k=top_k, mode=query_mode)  # type: ignore[arg-type]
+        )
         payload["query"] = query_payload
 
     if json_output:
@@ -513,7 +517,7 @@ def rag_sync_pending(
         json.dumps(
             {
                 "processed": len(results),
-                "results": [result.__dict__ for result in results],
+                "results": [dataclasses.asdict(result) for result in results],
             },
             indent=2,
         )
@@ -524,6 +528,11 @@ def rag_sync_pending(
 def rag_query(
     text: str = typer.Argument(..., help="Semantic catalog query."),
     top_k: int = typer.Option(5, "--top-k", min=1, help="Number of matches to return."),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Search mode: semantic | lexical | hybrid (default: hybrid).",
+    ),
     mock: bool = typer.Option(
         False,
         "--mock",
@@ -532,7 +541,7 @@ def rag_query(
 ) -> None:
     """Query backend-owned catalog embeddings."""
     _, _, retrieval_service = _build_rag_services(mock=mock)
-    result = retrieval_service.query(text, top_k=top_k)
+    result = retrieval_service.query(text, top_k=top_k, mode=mode)  # type: ignore[arg-type]
     print(json.dumps(serialize_query_result(result), indent=2))
 
 

@@ -283,15 +283,72 @@ Phase 3 retrieval lives in `invproc` and exists to validate the catalog RAG path
 - Return an explicit backend result shape containing:
   - the query text
   - the embedding model
+  - the `search_mode` used (`semantic`, `lexical`, or `hybrid`)
   - the top matches with score/similarity metadata
   - enough product metadata for later React rendering
   - an explicit empty-result shape when there is no confident match
+
+### Search modes
+
+Three modes are supported. Default is `hybrid`.
+
+| Mode | Description |
+| --- | --- |
+| `semantic` | Vector cosine similarity only. Best for natural-language queries. |
+| `lexical` | BM25/full-text search only. Best for exact barcodes, SKUs, product codes. |
+| `hybrid` | Both searches run in parallel; results merged via Reciprocal Rank Fusion (RRF, k=60). Deduplicates by `product_id`. |
+
+**Why hybrid is the default:** wholesale ordering queries mix fuzzy natural language ("re-order the metro yogurt") with exact product references ("barcode 8001480015630"). Semantic search alone misses exact-code lookups; lexical alone misses paraphrase queries. RRF merging handles both without threshold tuning.
+
+### Supabase SQL RPC: `search_product_catalog_embeddings_lexical`
+
+Required for the Supabase-backed lexical search path.
+
+```sql
+CREATE OR REPLACE FUNCTION search_product_catalog_embeddings_lexical(
+    p_query_text TEXT,
+    p_embedding_model TEXT,
+    p_match_count INT
+)
+RETURNS TABLE (
+    product_id UUID,
+    product_snapshot_hash TEXT,
+    embedding_model TEXT,
+    embedding_text TEXT,
+    metadata JSONB,
+    score FLOAT
+)
+LANGUAGE SQL STABLE AS $$
+    SELECT
+        product_id,
+        product_snapshot_hash,
+        embedding_model,
+        embedding_text,
+        metadata,
+        ts_rank(
+            to_tsvector('simple', embedding_text),
+            plainto_tsquery('simple', p_query_text)
+        )::FLOAT AS score
+    FROM product_catalog_embeddings
+    WHERE
+        embedding_model = p_embedding_model
+        AND to_tsvector('simple', embedding_text) @@ plainto_tsquery('simple', p_query_text)
+    ORDER BY score DESC
+    LIMIT p_match_count;
+$$;
+```
+
+Notes:
+- `'simple'` dictionary tokenizes without language-specific stemming — correct for multilingual product names, barcodes, and SKU codes.
+- A GIN index on `to_tsvector('simple', embedding_text)` is recommended for scale.
+- The `semantic` path continues to use the existing `match_product_catalog_embeddings` RPC (pgvector cosine).
 
 ### Retrieval guarantees
 
 - Query and catalog embeddings must use the same model identifier.
 - Retrieval misses must remain explicit and inspectable.
 - Retrieval quality is validated in this repo before any React dependency is introduced.
+- `search_mode` is always present in the response so callers can inspect which strategy was used.
 
 ## Backend Validation Surfaces
 

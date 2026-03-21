@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 import uuid
-from typing import Any, AsyncIterator, Dict, cast
+from typing import Any, AsyncIterator, Dict, Literal, Optional, cast
 
 from fastapi import (
     APIRouter,
@@ -15,6 +16,7 @@ from fastapi import (
     FastAPI,
     File,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -30,7 +32,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from invproc.auth import SupabaseClientProvider, verify_supabase_jwt
+from invproc.auth import SupabaseClientProvider, verify_internal_caller, verify_supabase_jwt
 from invproc.catalog_sync import (
     CatalogSyncProducer,
     NoopCatalogSyncProducer,
@@ -56,11 +58,14 @@ from invproc.models import (
 )
 from invproc.pdf_processor import PDFProcessor
 from invproc.rag import (
+    CatalogEvalCase,
+    CatalogRagEvaluator,
     CatalogRetrievalService,
     CatalogSyncWorker,
     build_rag_worker,
     build_retrieval_service,
     build_sync_status_snapshot,
+    serialize_eval_result,
     serialize_query_result,
     serialize_sync_status_snapshot,
 )
@@ -80,6 +85,7 @@ class CatalogQueryRequest(BaseModel):
 
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+    search_mode: Literal["semantic", "lexical", "hybrid"] = Field(default="hybrid")
 
 
 class CatalogImportRequest(BaseModel):
@@ -89,6 +95,13 @@ class CatalogImportRequest(BaseModel):
     payload: InvoiceImportRequest
     sync_after_import: bool = Field(default=True)
     sync_limit: int = Field(default=100, ge=1, le=1000)
+
+
+class EvalRequest(BaseModel):
+    """Request payload for RAG evaluation."""
+
+    cases: list[dict[str, Any]]
+    embedding_model: Optional[str] = None
 
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
@@ -119,9 +132,11 @@ def build_app_resources(config: InvoiceConfig) -> AppResources:
     supabase_client_provider = SupabaseClientProvider(config)
     import_repository: InvoiceImportRepository
     if config.import_repository_backend == "supabase":
-        import_repository = SupabaseInvoiceImportRepository(
-            supabase_client_provider.get_client(),
-        )
+        try:
+            supabase_client = supabase_client_provider.get_client()
+        except RuntimeError as e:
+            raise RuntimeError(f"Failed to initialise Supabase client: {e}") from e
+        import_repository = SupabaseInvoiceImportRepository(supabase_client)
     else:
         import_repository = InMemoryInvoiceImportRepository()
     if config.catalog_sync_enabled:
@@ -330,18 +345,18 @@ async def preview_invoice_pricing(
 @router.post(
     "/internal/rag/import",
     status_code=status.HTTP_200_OK,
-    responses={401: {"description": "Invalid or expired token"}},
+    responses={401: {"description": "Missing or invalid token"}, 403: {"description": "Forbidden"}},
 )
 async def import_catalog_rows(
     request: Request,
     payload: CatalogImportRequest,
-    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    caller: dict[str, Any] = Depends(verify_internal_caller),
     import_service: InvoiceImportService = Depends(get_import_service),
     worker: CatalogSyncWorker = Depends(get_rag_worker),
 ) -> dict[str, Any]:
     """Import catalog rows and optionally process sync work through the API surface."""
     _ = request
-    _ = user
+    _ = caller
     import_response = await run_in_threadpool(
         import_service.import_rows,
         payload.payload,
@@ -352,7 +367,7 @@ async def import_catalog_rows(
         results = await run_in_threadpool(worker.sync_pending, limit=payload.sync_limit)
         response["sync"] = {
             "processed": len(results),
-            "results": [result.__dict__ for result in results],
+            "results": [dataclasses.asdict(result) for result in results],
         }
     return response
 
@@ -360,42 +375,43 @@ async def import_catalog_rows(
 @router.post(
     "/internal/rag/sync-pending",
     status_code=status.HTTP_200_OK,
-    responses={401: {"description": "Invalid or expired token"}},
+    responses={401: {"description": "Missing or invalid token"}, 403: {"description": "Forbidden"}},
 )
 async def sync_pending_catalog_embeddings(
     request: Request,
-    limit: int = 100,
-    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    limit: int = Query(default=100, ge=1, le=1000),
+    caller: dict[str, Any] = Depends(verify_internal_caller),
     worker: CatalogSyncWorker = Depends(get_rag_worker),
 ) -> dict[str, Any]:
     """Process pending backend RAG sync rows using app-owned resources."""
     _ = request
-    _ = user
+    _ = caller
     results = await run_in_threadpool(worker.sync_pending, limit=limit)
     return {
         "processed": len(results),
-        "results": [result.__dict__ for result in results],
+        "results": [dataclasses.asdict(result) for result in results],
     }
 
 
 @router.post(
     "/internal/rag/query",
     status_code=status.HTTP_200_OK,
-    responses={401: {"description": "Invalid or expired token"}},
+    responses={401: {"description": "Missing or invalid token"}, 403: {"description": "Forbidden"}},
 )
 async def query_catalog_embeddings(
     request: Request,
     payload: CatalogQueryRequest,
-    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    caller: dict[str, Any] = Depends(verify_internal_caller),
     retrieval_service: CatalogRetrievalService = Depends(get_rag_retrieval_service),
 ) -> dict[str, Any]:
     """Query backend-owned catalog embeddings through the app resource graph."""
     _ = request
-    _ = user
+    _ = caller
     result = await run_in_threadpool(
         retrieval_service.query,
         payload.query,
         top_k=payload.top_k,
+        mode=payload.search_mode,
     )
     return serialize_query_result(result)
 
@@ -403,18 +419,38 @@ async def query_catalog_embeddings(
 @router.get(
     "/internal/rag/status",
     status_code=status.HTTP_200_OK,
-    responses={401: {"description": "Invalid or expired token"}},
+    responses={401: {"description": "Missing or invalid token"}, 403: {"description": "Forbidden"}},
 )
 async def rag_status(
     request: Request,
-    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    caller: dict[str, Any] = Depends(verify_internal_caller),
     repository: InvoiceImportRepository = Depends(get_import_repository),
 ) -> dict[str, Any]:
     """Inspect backend RAG sync queue state through the app resource graph."""
     _ = request
-    _ = user
+    _ = caller
     snapshot = await run_in_threadpool(build_sync_status_snapshot, repository)
     return serialize_sync_status_snapshot(snapshot)
+
+
+@router.post(
+    "/internal/rag/eval",
+    status_code=status.HTTP_200_OK,
+    responses={401: {"description": "Missing or invalid token"}, 403: {"description": "Forbidden"}},
+)
+async def rag_eval_endpoint(
+    request: Request,
+    payload: EvalRequest,
+    caller: dict[str, Any] = Depends(verify_internal_caller),
+    retrieval_service: CatalogRetrievalService = Depends(get_rag_retrieval_service),
+) -> dict[str, Any]:
+    """Run RAG retrieval evaluation against provided cases."""
+    _ = request
+    _ = caller
+    cases = [CatalogEvalCase(**case) for case in payload.cases]
+    evaluator = CatalogRagEvaluator(retrieval_service)
+    result = await run_in_threadpool(evaluator.evaluate, cases)
+    return serialize_eval_result(result)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:

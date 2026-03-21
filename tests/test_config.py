@@ -43,7 +43,8 @@ def test_supabase_settings_from_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service-role")
     config = InvoiceConfig(_env_file=None)
     assert config.supabase_url == "https://example.supabase.co"
-    assert config.supabase_service_role_key == "service-role"
+    assert config.supabase_service_role_key is not None
+    assert config.supabase_service_role_key.get_secret_value() == "service-role"
 
 
 def test_config_singleton(monkeypatch):
