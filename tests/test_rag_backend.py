@@ -1539,7 +1539,6 @@ def seed_metro_catalog(repository: InMemoryInvoiceImportRepository) -> None:
 
 def test_eval_fixture_covers_all_query_patterns(tmp_path: Path) -> None:
     """Smoke test: unit fixture loads cleanly and has sufficient cases."""
-    import json
     fixture_path = Path(__file__).parent / "fixtures" / "rag_queries_unit.json"
     from invproc.rag import load_eval_cases
     cases = load_eval_cases(fixture_path)
