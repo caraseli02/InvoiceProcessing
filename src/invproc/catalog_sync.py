@@ -58,8 +58,8 @@ def build_product_snapshot_hash(
     product: ProductRecord,
     upsert_input: UpsertProductInput,
     embedding_model: str,
-    category: str | None = None,
-    uom: str | None = None,
+    category: str | None,
+    uom: str | None,
 ) -> str:
     """Build deterministic product snapshot hash from Phase 1 contract fields."""
     payload = {
