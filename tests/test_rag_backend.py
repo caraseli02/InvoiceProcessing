@@ -1492,3 +1492,102 @@ def test_build_import_request_forwards_category_and_suppresses_general() -> None
     assert request.rows[1].uom == "KG"
     assert request.rows[2].category is None
     assert request.rows[2].uom is None
+
+
+# ---------------------------------------------------------------------------
+# Part B — Expanded eval fixture catalog
+# ---------------------------------------------------------------------------
+
+_METRO_CATALOG = [
+    # Dairy
+    dict(product_id="prod_yogurt",      name="Greek Yogurt",             barcode="123456",      category="Dairy",     uom="bucket"),
+    dict(product_id="prod_lapte_1l",    name="LAPTE INTEGRAL 1L",        barcode="4840123001",  category="Dairy",     uom="L"),
+    dict(product_id="prod_lapte_2l",    name="LAPTE INTEGRAL 2L",        barcode="4840123002",  category="Dairy",     uom="L"),
+    dict(product_id="prod_unt",         name="UNT CIOCOLATA JLC 200G",   barcode="4840167001399", category="Dairy",   uom="BUC"),
+    dict(product_id="prod_smantana",    name="SMANTANA 20% 400G",        barcode="4840167003001", category="Dairy",   uom="BUC"),
+    # Beverages
+    dict(product_id="prod_juice",       name="Orange Juice",             barcode="654321",      category="Beverages", uom="carton"),
+    dict(product_id="prod_water",       name="Mineral Water",            barcode="999999",      category="Beverages", uom="bottle"),
+    dict(product_id="prod_ceai_verde",  name="CEAI VERDE RIOBA 25PL",    barcode="4820012682966", category="Beverages", uom="BUC"),
+    dict(product_id="prod_ceai_zmeura", name="CEAI ZMEURA MENTA RIOBA",  barcode="4820012683001", category="Beverages", uom="BUC"),
+    dict(product_id="prod_ceai_bebe",   name="CEAI MUSETEL BEBE 20PL",   barcode="4820000111222", category="Beverages", uom="BUC"),
+    # Snacks / Sweets
+    dict(product_id="prod_halva",       name="HALVA ARAHIDE 350G",       barcode="4841259001754", category="Snacks",  uom="BUC"),
+    dict(product_id="prod_cioc_alba",   name="CIOCOLATA ALBA 70% 200G",  barcode="4840167002500", category="Snacks",  uom="BUC"),
+    dict(product_id="prod_turta",       name="TURTA DULCE CU PRUNE",     barcode="4841259002001", category="Snacks",  uom="BUC"),
+    # Cereale / Pantry
+    dict(product_id="prod_sem_fl",      name="SEM FL 500G",              barcode="4841259003001", category="Cereale", uom="BUC"),
+    dict(product_id="prod_orez",        name="OREZ ROTUND 1KG",          barcode="4841259004001", category="Cereale", uom="BUC"),
+    # No-category products (the weak spot)
+    dict(product_id="prod_no_cat_1",    name="MORCOVI BABY 400G",        barcode="4841000001001", category=None,      uom="BUC"),
+    dict(product_id="prod_no_cat_2",    name="ROSII CHERRY 250G",        barcode="4841000002001", category=None,      uom="BUC"),
+]
+
+
+def seed_metro_catalog(repository: InMemoryInvoiceImportRepository) -> None:
+    """Seed the full METRO catalog fixture into the in-memory repository."""
+    for item in _METRO_CATALOG:
+        seed_synced_product(
+            repository,
+            product_id=item["product_id"],
+            name=item["name"],
+            barcode=item["barcode"],
+            category=item["category"],
+            uom=item["uom"],
+        )
+
+
+def test_eval_fixture_covers_all_query_patterns(tmp_path: Path) -> None:
+    """Smoke test: unit fixture loads cleanly and has sufficient cases."""
+    import json
+    fixture_path = Path(__file__).parent / "fixtures" / "rag_queries_unit.json"
+    from invproc.rag import load_eval_cases
+    cases = load_eval_cases(fixture_path)
+    assert len(cases) >= 30, f"Expected ≥30 eval cases, got {len(cases)}"
+
+
+def test_eval_fixture_notes_field_silently_ignored(tmp_path: Path) -> None:
+    """load_eval_cases ignores unknown keys like notes and expected_fail."""
+    import json
+    from invproc.rag import CatalogEvalCase, load_eval_cases
+    fixture = tmp_path / "test.json"
+    fixture.write_text(json.dumps({
+        "queries": [
+            {
+                "query": "test query",
+                "expected_product_id": "prod_1",
+                "notes": "this is a note",
+                "expected_fail": True,
+                "some_future_key": "ignored",
+            }
+        ]
+    }))
+    cases = load_eval_cases(fixture)
+    assert len(cases) == 1
+    assert cases[0] == CatalogEvalCase(query="test query", expected_product_id="prod_1")
+
+
+def test_eval_metro_catalog_hybrid_top5_hit_rate(tmp_path: Path) -> None:
+    """Hybrid search achieves ≥80% top-5 hit rate on the expanded fixture."""
+    from invproc.rag import CatalogRagEvaluator, CatalogRetrievalService, load_eval_cases
+    from invproc.config import InvoiceConfig
+
+    repository = InMemoryInvoiceImportRepository()
+    seed_metro_catalog(repository)
+
+    config = InvoiceConfig(_env_file=None, mock=True)
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(config),
+        default_embedding_model=config.catalog_sync_embedding_model,
+    )
+    evaluator = CatalogRagEvaluator(retrieval)
+
+    fixture_path = Path(__file__).parent / "fixtures" / "rag_queries_unit.json"
+    cases = load_eval_cases(fixture_path)
+    result = evaluator.evaluate(cases)
+
+    assert result.top_5_hit_rate >= 0.80, (
+        f"Hybrid top-5 hit rate {result.top_5_hit_rate:.0%} is below 80% threshold. "
+        f"Failing cases: {[c for c in result.cases if not c['top_5_hit']]}"
+    )
