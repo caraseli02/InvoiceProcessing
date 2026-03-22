@@ -129,6 +129,8 @@ class InvoicePreviewRow(BaseModel):
     quantity: float = Field(..., gt=0)
     line_total_lei: float = Field(..., ge=0)
     weight_kg: Optional[float] = Field(None, gt=0)
+    category: Optional[str] = None
+    uom: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_numeric_finite(self) -> "InvoicePreviewRow":

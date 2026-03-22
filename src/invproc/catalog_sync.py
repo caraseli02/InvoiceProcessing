@@ -119,6 +119,8 @@ class RepositoryCatalogSyncProducer:
             product=product,
             upsert_input=upsert_input,
             embedding_model=self.embedding_model,
+            category=product.category,
+            uom=product.uom,
         )
         record, created = self.repository.create_or_reuse_product_sync(
             ProductSyncRecordInput(
@@ -127,8 +129,8 @@ class RepositoryCatalogSyncProducer:
                 embedding_model=self.embedding_model,
                 name=product.name,
                 barcode=product.barcode,
-                category=None,
-                uom=None,
+                category=product.category,
+                uom=product.uom,
                 supplier=product.supplier,
                 price_eur=upsert_input.price,
                 price_50=upsert_input.price_50,

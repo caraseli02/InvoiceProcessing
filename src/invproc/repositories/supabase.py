@@ -418,6 +418,8 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             name=str(row["name"]),
             normalized_name=str(row["normalized_name"]),
             supplier=row.get("supplier"),
+            category=row.get("category"),
+            uom=row.get("uom"),
         )
 
     def _map_product_sync(self, row: dict[str, Any]) -> ProductSyncRecord:
