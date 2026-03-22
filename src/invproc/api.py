@@ -58,8 +58,8 @@ from invproc.models import (
 )
 from invproc.pdf_processor import PDFProcessor
 from invproc.rag import (
-    CatalogEvalCase,
     CatalogRagEvaluator,
+    _case_from_dict,
     CatalogRetrievalService,
     CatalogSyncWorker,
     build_rag_worker,
@@ -447,7 +447,7 @@ async def rag_eval_endpoint(
     """Run RAG retrieval evaluation against provided cases."""
     _ = request
     _ = caller
-    cases = [CatalogEvalCase(**case) for case in payload.cases]
+    cases = [_case_from_dict(case) for case in payload.cases]
     evaluator = CatalogRagEvaluator(retrieval_service)
     result = await run_in_threadpool(evaluator.evaluate, cases)
     return serialize_eval_result(result)

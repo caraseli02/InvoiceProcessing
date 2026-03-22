@@ -469,16 +469,24 @@ class CatalogRagEvaluator:
         )
 
 
+_EVAL_CASE_KEYS: frozenset[str] = frozenset({"query", "expected_product_id", "expected_name"})
+
+
+def _case_from_dict(d: dict[str, Any]) -> CatalogEvalCase:
+    """Construct a CatalogEvalCase from a raw dict, silently ignoring unknown keys."""
+    return CatalogEvalCase(**{k: v for k, v in d.items() if k in _EVAL_CASE_KEYS})
+
+
 def load_eval_cases(path: Path) -> list[CatalogEvalCase]:
     """Load evaluation queries from a JSON fixture.
 
-    Unknown keys (e.g. ``notes``) are silently ignored so fixture files can
-    carry human-readable annotations without breaking deserialization.
+    Unknown keys (e.g. ``notes``, ``expected_fail``) are silently ignored so
+    fixture files can carry human-readable annotations without breaking
+    deserialization.
     """
     payload = json.loads(path.read_text())
     raw_cases = payload["queries"] if isinstance(payload, dict) else payload
-    known = {"query", "expected_product_id", "expected_name"}
-    return [CatalogEvalCase(**{k: v for k, v in raw_case.items() if k in known}) for raw_case in raw_cases]
+    return [_case_from_dict(raw_case) for raw_case in raw_cases]
 
 
 def serialize_query_result(result: CatalogQueryResult) -> dict[str, Any]:

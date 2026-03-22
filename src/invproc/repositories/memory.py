@@ -106,6 +106,8 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
                 name=data.name,
                 normalized_name=normalize_name(data.name),
                 supplier=data.supplier,
+                category=data.category,
+                uom=data.uom,
             )
             self._products[product_id] = product
             if data.barcode:
@@ -125,6 +127,8 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
                 name=data.name,
                 normalized_name=normalize_name(data.name),
                 supplier=data.supplier,
+                category=data.category,
+                uom=data.uom,
             )
             self._products[product_id] = product
             if data.barcode:

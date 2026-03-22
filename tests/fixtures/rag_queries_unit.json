@@ -1,0 +1,181 @@
+{
+  "description": "Unit-test eval fixture for METRO Moldova catalog retrieval. 34 cases covering fuzzy intent, Romanian names, abbreviations, UOM-qualified, category-concept, near-duplicate disambiguation, typo variants, and null-category weak spots. Uses synthetic prod_* IDs seeded by test_rag_backend.py. Barcodes intentionally excluded — users search by name/intent.",
+  "queries": [
+    {
+      "query": "need greek yogurt for metro order",
+      "expected_product_id": "prod_yogurt",
+      "notes": "Fuzzy English intent — existing baseline case"
+    },
+    {
+      "query": "please add orange juice carton",
+      "expected_product_id": "prod_juice",
+      "notes": "Fuzzy English intent — existing baseline case"
+    },
+    {
+      "query": "HALVA ARAHIDE",
+      "expected_product_id": "prod_halva",
+      "notes": "Romanian exact uppercase — lexical should dominate"
+    },
+    {
+      "query": "CEAI VERDE RIOBA",
+      "expected_product_id": "prod_ceai_verde",
+      "notes": "Romanian exact uppercase partial match"
+    },
+    {
+      "query": "CIOCOLATA ALBA",
+      "expected_product_id": "prod_cioc_alba",
+      "notes": "Romanian exact uppercase — chocolate disambiguation"
+    },
+    {
+      "query": "LAPTE INTEGRAL 1L",
+      "expected_product_id": "prod_lapte_1l",
+      "notes": "Romanian exact — must NOT return 2L variant"
+    },
+    {
+      "query": "LAPTE INTEGRAL 2L",
+      "expected_product_id": "prod_lapte_2l",
+      "notes": "Romanian exact — must NOT return 1L variant"
+    },
+    {
+      "query": "TURTA DULCE CU PRUNE",
+      "expected_product_id": "prod_turta",
+      "notes": "Romanian exact multi-word product name"
+    },
+    {
+      "query": "halva cu arahide",
+      "expected_product_id": "prod_halva",
+      "notes": "Romanian fuzzy: peanut halva. Semantic should connect halva variants."
+    },
+    {
+      "query": "ceai de zmeura",
+      "expected_product_id": "prod_ceai_zmeura",
+      "notes": "Romanian fuzzy: raspberry tea. Semantic path needed — no exact token match."
+    },
+    {
+      "query": "lapte de 1 litru",
+      "expected_product_id": "prod_lapte_1l",
+      "notes": "Romanian fuzzy: 1L milk phrased with unit word"
+    },
+    {
+      "query": "ciocolata neagra 70 procente",
+      "expected_product_id": "prod_cioc_alba",
+      "notes": "Romanian fuzzy: 70% chocolate. Semantic similarity to CIOCOLATA ALBA 70%.",
+      "expected_fail": true
+    },
+    {
+      "query": "turta cu fructe",
+      "expected_product_id": "prod_turta",
+      "notes": "Romanian fuzzy: gingerbread with fruit. Semantic needed."
+    },
+    {
+      "query": "SEM FL",
+      "expected_product_id": "prod_sem_fl",
+      "notes": "Abbreviation: sunflower seeds abbreviated as SEM FL"
+    },
+    {
+      "query": "UNT CIOC",
+      "expected_product_id": "prod_unt",
+      "notes": "Abbreviation: chocolate butter abbreviated"
+    },
+    {
+      "query": "SMANT",
+      "expected_product_id": "prod_smantana",
+      "notes": "Abbreviation: sour cream (smantana) truncated"
+    },
+    {
+      "query": "mineral water 1.5L bottle",
+      "expected_product_id": "prod_water",
+      "notes": "UOM-qualified English: bottle specifier"
+    },
+    {
+      "query": "lapte 1 litru integral",
+      "expected_product_id": "prod_lapte_1l",
+      "notes": "UOM-qualified Romanian: volume qualifier disambiguates from 2L"
+    },
+    {
+      "query": "ceai musetel in plicuri",
+      "expected_product_id": "prod_ceai_bebe",
+      "notes": "UOM-qualified Romanian: chamomile tea in sachets (plicuri)"
+    },
+    {
+      "query": "ceai pentru bebelusi",
+      "expected_product_id": "prod_ceai_bebe",
+      "notes": "Category concept: baby chamomile tea. Semantic + category Beverages."
+    },
+    {
+      "query": "ceai de fructe sau plante",
+      "expected_product_id": "prod_ceai_verde",
+      "notes": "Category concept: fruit/herbal tea — broad query hitting Beverages."
+    },
+    {
+      "query": "dulciuri cu nuci",
+      "expected_product_id": "prod_halva",
+      "notes": "Category concept: nut-based sweets. Semantic path via Snacks + arahide."
+    },
+    {
+      "query": "produs lactat pentru comanda",
+      "expected_product_id": "prod_yogurt",
+      "notes": "Category concept: dairy product for order. Broad Dairy category."
+    },
+    {
+      "query": "lapte 1L versus lapte 2L — vreau cel de 2 litri",
+      "expected_product_id": "prod_lapte_2l",
+      "notes": "Near-duplicate disambiguation: explicit 2L preference in query"
+    },
+    {
+      "query": "cel mai mic lapte",
+      "expected_product_id": "prod_lapte_1l",
+      "notes": "Near-duplicate disambiguation: smallest milk = 1L",
+      "expected_fail": true
+    },
+    {
+      "query": "ceai verde vs ceai de zmeura — vreau cel cu zmeura",
+      "expected_product_id": "prod_ceai_zmeura",
+      "notes": "Near-duplicate disambiguation: explicit raspberry preference"
+    },
+    {
+      "query": "ciocolata alba nu neagra",
+      "expected_product_id": "prod_cioc_alba",
+      "notes": "Near-duplicate disambiguation: white chocolate explicitly selected"
+    },
+    {
+      "query": "grek yogurt",
+      "expected_product_id": "prod_yogurt",
+      "notes": "Typo: greek misspelled. Semantic should be robust."
+    },
+    {
+      "query": "minral water",
+      "expected_product_id": "prod_water",
+      "notes": "Typo: mineral misspelled"
+    },
+    {
+      "query": "oranje joos",
+      "expected_product_id": "prod_juice",
+      "notes": "Typo: orange juice heavily misspelled",
+      "expected_fail": true
+    },
+    {
+      "query": "MORCOVI BABY",
+      "expected_product_id": "prod_no_cat_1",
+      "notes": "Null-category weak spot: baby carrots — no category in embedding text",
+      "expected_fail": true
+    },
+    {
+      "query": "rosii mici cherry",
+      "expected_product_id": "prod_no_cat_2",
+      "notes": "Null-category weak spot: cherry tomatoes — no category, fuzzy Romanian"
+    },
+    {
+      "query": "legume mici pentru salata",
+      "expected_product_id": "prod_no_cat_2",
+      "notes": "Null-category weak spot: small salad vegetables — category-concept with null category",
+      "expected_fail": true
+    },
+    {
+      "query": "produse fara categorie in catalog",
+      "expected_product_id": "prod_no_cat_1",
+      "notes": "Null-category weak spot: query for uncategorized product",
+      "expected_fail": true
+    }
+  ]
+}

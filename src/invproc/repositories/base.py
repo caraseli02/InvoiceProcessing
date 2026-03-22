@@ -16,6 +16,8 @@ class ProductRecord:
     name: str
     normalized_name: str
     supplier: Optional[str]
+    category: Optional[str] = None
+    uom: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class UpsertProductInput:
     price_70: float
     price_100: float
     markup: int
+    category: Optional[str] = None
+    uom: Optional[str] = None
 
 
 @dataclass(frozen=True)

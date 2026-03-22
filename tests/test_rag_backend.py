@@ -1320,3 +1320,273 @@ def test_serialize_query_result_includes_match_threshold() -> None:
 
     assert serialized["match_threshold"] == 0.05
     assert len(serialized["matches"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Part A — Category / UOM propagation tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_catalog_embedding_text_includes_category_when_set() -> None:
+    """Category token appears in embedding text when category is non-null."""
+    record = build_sync_record_input(
+        name="Greek Yogurt", barcode="123456", category="Dairy", uom="bucket"
+    )
+    sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
+
+    assert build_catalog_embedding_text(sync_record) == "Greek Yogurt 123456 Dairy bucket"
+
+
+def test_build_catalog_embedding_text_omits_null_category() -> None:
+    """No category token when category is None."""
+    record = build_sync_record_input(name="CEAI VERDE", barcode=None, category=None, uom="BUC")
+    sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
+
+    assert build_catalog_embedding_text(sync_record) == "CEAI VERDE BUC"
+
+
+def test_emit_product_sync_forwards_category_and_uom() -> None:
+    """RepositoryCatalogSyncProducer populates category/uom in the sync row."""
+    from invproc.catalog_sync import CatalogSyncContext, RepositoryCatalogSyncProducer
+
+    repository = InMemoryInvoiceImportRepository()
+    producer = RepositoryCatalogSyncProducer(
+        repository=repository,
+        embedding_model="text-embedding-3-small",
+    )
+    product = ProductRecord(
+        product_id="prod_tea",
+        barcode="111222333",
+        name="CEAI VERDE",
+        normalized_name="ceai verde",
+        supplier="METRO",
+        category="Beverages",
+        uom="BUC",
+    )
+    upsert_input = UpsertProductInput(
+        name="CEAI VERDE",
+        barcode="111222333",
+        supplier="METRO",
+        price=1.5,
+        price_50=2.0,
+        price_70=2.5,
+        price_100=3.0,
+        markup=70,
+        category="Beverages",
+        uom="BUC",
+    )
+    result = producer.emit_product_sync(
+        product=product,
+        upsert_input=upsert_input,
+        context=CatalogSyncContext(
+            import_id="imp_1", source_row_id="row_1", invoice_number="INV-1"
+        ),
+    )
+
+    assert result.record is not None
+    assert result.record.category == "Beverages"
+    assert result.record.uom == "BUC"
+
+
+def test_emit_product_sync_different_hash_when_category_added() -> None:
+    """Re-import with newly-available category produces a different snapshot hash
+    and therefore a new pending sync row (re-embedding triggered)."""
+    from invproc.catalog_sync import CatalogSyncContext, RepositoryCatalogSyncProducer
+
+    repository = InMemoryInvoiceImportRepository()
+    producer = RepositoryCatalogSyncProducer(
+        repository=repository,
+        embedding_model="text-embedding-3-small",
+    )
+
+    def _make_product(category: str | None) -> tuple[ProductRecord, UpsertProductInput]:
+        product = ProductRecord(
+            product_id="prod_milk",
+            barcode="999000111",
+            name="Lapte Integral",
+            normalized_name="lapte integral",
+            supplier="METRO",
+            category=category,
+            uom="L",
+        )
+        upsert = UpsertProductInput(
+            name="Lapte Integral",
+            barcode="999000111",
+            supplier="METRO",
+            price=1.0,
+            price_50=1.3,
+            price_70=1.5,
+            price_100=1.8,
+            markup=70,
+            category=category,
+            uom="L",
+        )
+        return product, upsert
+
+    ctx = CatalogSyncContext(import_id="imp_1", source_row_id="r1", invoice_number="INV-1")
+
+    # First import — no category yet
+    p1, u1 = _make_product(None)
+    r1 = producer.emit_product_sync(product=p1, upsert_input=u1, context=ctx)
+    assert r1.created is True
+
+    # Second import — same product, now category is known
+    p2, u2 = _make_product("Dairy")
+    r2 = producer.emit_product_sync(product=p2, upsert_input=u2, context=ctx)
+    assert r2.created is True
+    assert r1.record is not None and r2.record is not None
+    assert r1.record.product_snapshot_hash != r2.record.product_snapshot_hash
+    assert r2.record.category == "Dairy"
+
+
+def test_build_import_request_forwards_category_and_suppresses_general() -> None:
+    """CLI import builder forwards real categories and converts 'General' → None."""
+    invoice = InvoiceData(
+        supplier="METRO",
+        invoice_number="INV-CAT",
+        date="2026-03-22",
+        total_amount=50.0,
+        currency="RON",
+        products=[
+            Product(
+                raw_code="111",
+                name="HALVA ARAHIDE",
+                quantity=1,
+                unit_price=10.0,
+                total_price=10.0,
+                confidence_score=0.95,
+                row_id="row-1",
+                category_suggestion="Snacks",
+                uom="BUC",
+            ),
+            Product(
+                raw_code="222",
+                name="PRODUS NECUNOSCUT",
+                quantity=2,
+                unit_price=5.0,
+                total_price=10.0,
+                confidence_score=0.80,
+                row_id="row-2",
+                category_suggestion="General",
+                uom="KG",
+            ),
+            Product(
+                raw_code="333",
+                name="LAPTE INTEGRAL",
+                quantity=3,
+                unit_price=1.0,
+                total_price=3.0,
+                confidence_score=0.92,
+                row_id="row-3",
+                category_suggestion=None,
+                uom=None,
+            ),
+        ],
+    )
+
+    request = _build_import_request_from_invoice(invoice)
+
+    assert request.rows[0].category == "Snacks"
+    assert request.rows[0].uom == "BUC"
+    assert request.rows[1].category is None  # "General" suppressed → None
+    assert request.rows[1].uom == "KG"
+    assert request.rows[2].category is None
+    assert request.rows[2].uom is None
+
+
+# ---------------------------------------------------------------------------
+# Part B — Expanded eval fixture catalog
+# ---------------------------------------------------------------------------
+
+_METRO_CATALOG = [
+    # Dairy
+    dict(product_id="prod_yogurt",      name="Greek Yogurt",             barcode="123456",      category="Dairy",     uom="bucket"),
+    dict(product_id="prod_lapte_1l",    name="LAPTE INTEGRAL 1L",        barcode="4840123001",  category="Dairy",     uom="L"),
+    dict(product_id="prod_lapte_2l",    name="LAPTE INTEGRAL 2L",        barcode="4840123002",  category="Dairy",     uom="L"),
+    dict(product_id="prod_unt",         name="UNT CIOCOLATA JLC 200G",   barcode="4840167001399", category="Dairy",   uom="BUC"),
+    dict(product_id="prod_smantana",    name="SMANTANA 20% 400G",        barcode="4840167003001", category="Dairy",   uom="BUC"),
+    # Beverages
+    dict(product_id="prod_juice",       name="Orange Juice",             barcode="654321",      category="Beverages", uom="carton"),
+    dict(product_id="prod_water",       name="Mineral Water",            barcode="999999",      category="Beverages", uom="bottle"),
+    dict(product_id="prod_ceai_verde",  name="CEAI VERDE RIOBA 25PL",    barcode="4820012682966", category="Beverages", uom="BUC"),
+    dict(product_id="prod_ceai_zmeura", name="CEAI ZMEURA MENTA RIOBA",  barcode="4820012683001", category="Beverages", uom="BUC"),
+    dict(product_id="prod_ceai_bebe",   name="CEAI MUSETEL BEBE 20PL",   barcode="4820000111222", category="Beverages", uom="BUC"),
+    # Snacks / Sweets
+    dict(product_id="prod_halva",       name="HALVA ARAHIDE 350G",       barcode="4841259001754", category="Snacks",  uom="BUC"),
+    dict(product_id="prod_cioc_alba",   name="CIOCOLATA ALBA 70% 200G",  barcode="4840167002500", category="Snacks",  uom="BUC"),
+    dict(product_id="prod_turta",       name="TURTA DULCE CU PRUNE",     barcode="4841259002001", category="Snacks",  uom="BUC"),
+    # Cereale / Pantry
+    dict(product_id="prod_sem_fl",      name="SEM FL 500G",              barcode="4841259003001", category="Cereale", uom="BUC"),
+    dict(product_id="prod_orez",        name="OREZ ROTUND 1KG",          barcode="4841259004001", category="Cereale", uom="BUC"),
+    # No-category products (the weak spot)
+    dict(product_id="prod_no_cat_1",    name="MORCOVI BABY 400G",        barcode="4841000001001", category=None,      uom="BUC"),
+    dict(product_id="prod_no_cat_2",    name="ROSII CHERRY 250G",        barcode="4841000002001", category=None,      uom="BUC"),
+]
+
+
+def seed_metro_catalog(repository: InMemoryInvoiceImportRepository) -> None:
+    """Seed the full METRO catalog fixture into the in-memory repository."""
+    for item in _METRO_CATALOG:
+        seed_synced_product(
+            repository,
+            product_id=item["product_id"],
+            name=item["name"],
+            barcode=item["barcode"],
+            category=item["category"],
+            uom=item["uom"],
+        )
+
+
+def test_eval_fixture_covers_all_query_patterns(tmp_path: Path) -> None:
+    """Smoke test: unit fixture loads cleanly and has sufficient cases."""
+    fixture_path = Path(__file__).parent / "fixtures" / "rag_queries_unit.json"
+    from invproc.rag import load_eval_cases
+    cases = load_eval_cases(fixture_path)
+    assert len(cases) >= 30, f"Expected ≥30 eval cases, got {len(cases)}"
+
+
+def test_eval_fixture_notes_field_silently_ignored(tmp_path: Path) -> None:
+    """load_eval_cases ignores unknown keys like notes and expected_fail."""
+    import json
+    from invproc.rag import CatalogEvalCase, load_eval_cases
+    fixture = tmp_path / "test.json"
+    fixture.write_text(json.dumps({
+        "queries": [
+            {
+                "query": "test query",
+                "expected_product_id": "prod_1",
+                "notes": "this is a note",
+                "expected_fail": True,
+                "some_future_key": "ignored",
+            }
+        ]
+    }))
+    cases = load_eval_cases(fixture)
+    assert len(cases) == 1
+    assert cases[0] == CatalogEvalCase(query="test query", expected_product_id="prod_1")
+
+
+def test_eval_metro_catalog_hybrid_top5_hit_rate(tmp_path: Path) -> None:
+    """Hybrid search achieves ≥80% top-5 hit rate on the expanded fixture."""
+    from invproc.rag import CatalogRagEvaluator, CatalogRetrievalService, load_eval_cases
+    from invproc.config import InvoiceConfig
+
+    repository = InMemoryInvoiceImportRepository()
+    seed_metro_catalog(repository)
+
+    config = InvoiceConfig(_env_file=None, mock=True)
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(config),
+        default_embedding_model=config.catalog_sync_embedding_model,
+    )
+    evaluator = CatalogRagEvaluator(retrieval)
+
+    fixture_path = Path(__file__).parent / "fixtures" / "rag_queries_unit.json"
+    cases = load_eval_cases(fixture_path)
+    result = evaluator.evaluate(cases)
+
+    assert result.top_5_hit_rate >= 0.80, (
+        f"Hybrid top-5 hit rate {result.top_5_hit_rate:.0%} is below 80% threshold. "
+        f"Failing cases: {[c for c in result.cases if not c['top_5_hit']]}"
+    )

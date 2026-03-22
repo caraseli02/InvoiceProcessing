@@ -109,6 +109,8 @@ def test_snapshot_hash_normalizes_whitespace() -> None:
         product=product,
         upsert_input=upsert_input,
         embedding_model="text-embedding-3-small",
+        category=None,
+        uom=None,
     )
     normalized_product = ProductRecord(
         product_id="prod_1",
@@ -121,6 +123,8 @@ def test_snapshot_hash_normalizes_whitespace() -> None:
         product=normalized_product,
         upsert_input=upsert_input,
         embedding_model="text-embedding-3-small",
+        category=None,
+        uom=None,
     )
 
     assert first_hash == second_hash

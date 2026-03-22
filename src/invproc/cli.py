@@ -289,6 +289,10 @@ def _build_import_request_from_invoice(
                     "weight_kg": product.weight_kg_candidate
                     if product.weight_kg_candidate is not None
                     else default_weight_kg,
+                    "category": product.category_suggestion
+                    if product.category_suggestion != "General"
+                    else None,
+                    "uom": product.uom,
                 }
                 for index, product in enumerate(invoice_data.products, start=1)
             ],

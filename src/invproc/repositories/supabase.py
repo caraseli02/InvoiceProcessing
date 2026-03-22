@@ -91,6 +91,8 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             "price_70": data.price_70,
             "price_100": data.price_100,
             "markup": data.markup,
+            "category": data.category,
+            "uom": data.uom,
         }
         row = self._insert_one(self.products_table, payload)
         return self._map_product(row)
@@ -106,6 +108,8 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             "price_70": data.price_70,
             "price_100": data.price_100,
             "markup": data.markup,
+            "category": data.category,
+            "uom": data.uom,
             "updated_at": _utcnow().isoformat(),
         }
         row = self._update_one(self.products_table, payload, filters=[("id", product_id)])
@@ -418,6 +422,8 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             name=str(row["name"]),
             normalized_name=str(row["normalized_name"]),
             supplier=row.get("supplier"),
+            category=row.get("category"),
+            uom=row.get("uom"),
         )
 
     def _map_product_sync(self, row: dict[str, Any]) -> ProductSyncRecord:

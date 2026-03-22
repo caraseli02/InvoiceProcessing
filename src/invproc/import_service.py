@@ -279,6 +279,8 @@ class InvoiceImportService:
                 price_70=pricing.price_70,
                 price_100=pricing.price_100,
                 markup=70,
+                category=row.category,
+                uom=row.uom,
             )
 
             if match.product is None:
