@@ -114,13 +114,15 @@ class FakeSupabaseClient:
     def execute_rpc(self, fn_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if fn_name == "create_or_reuse_product_sync_row":
             table_rows = self.rows["product_embedding_sync"]
+            # Strip p_ prefix to simulate SQL function's param→column mapping
+            cols = {k[2:] if k.startswith("p_") else k: v for k, v in params.items()}
             for row in table_rows:
                 if (
-                    row["product_id"] == params["product_id"]
-                    and row["product_snapshot_hash"] == params["product_snapshot_hash"]
+                    row["product_id"] == cols["product_id"]
+                    and row["product_snapshot_hash"] == cols["product_snapshot_hash"]
                 ):
                     return [{**row.copy(), "created": False}]
-            row = self._prepare_row("product_embedding_sync", params)
+            row = self._prepare_row("product_embedding_sync", cols)
             table_rows.append(row)
             return [{**row.copy(), "created": True}]
 
