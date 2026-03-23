@@ -14,6 +14,7 @@ from rich.progress import track
 from .config import get_config_unvalidated, reload_config, InvoiceConfig
 from .import_service import InvoiceImportService
 from .models import InvoiceImportRequest
+from .weight_parser import parse_weight_candidate
 from .pdf_processor import PDFProcessor
 from .llm_extractor import LLMExtractor
 from .api import build_app_resources
@@ -287,8 +288,8 @@ def _build_import_request_from_invoice(
                     "quantity": product.quantity,
                     "line_total_lei": product.total_price,
                     "weight_kg": product.weight_kg_candidate
-                    if product.weight_kg_candidate is not None
-                    else default_weight_kg,
+                    or parse_weight_candidate(product.name).weight_kg
+                    or default_weight_kg,
                     "category": product.category_suggestion
                     if product.category_suggestion != "General"
                     else None,
