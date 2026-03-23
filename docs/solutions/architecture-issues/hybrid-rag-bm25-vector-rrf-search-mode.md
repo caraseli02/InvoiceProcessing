@@ -169,13 +169,18 @@ See also: `docs/solutions/architecture-issues/hybrid-search-concurrent-dispatch-
 ### API and CLI exposure
 
 - `CatalogQueryRequest.search_mode: Literal["semantic", "lexical", "hybrid"] = "hybrid"`
+- `CatalogQueryRequest.min_score: float = Field(default=0.02, ge=0.0, le=1.0)` — per-request score threshold; filters RRF noise band post-merge. Passed as `match_threshold` to `CatalogRetrievalService.query()`.
 - CLI: `--mode hybrid` on `rag query`, `--query-mode hybrid` on `rag ingest-invoice`
-- Response always includes `"search_mode"` so callers can inspect which strategy was used
+- CLI: `--min-score 0.02` on `rag query` — overrides per-request threshold
+- Response includes both `"search_mode"` and `"match_threshold"` so callers can inspect which strategy and threshold was used
+- Server-side default: `InvoiceConfig.rag_match_threshold` (default `0.0`) sets the service-level floor independently of per-request `min_score`; per-request value takes priority when provided
+
+See also: `docs/solutions/architecture-issues/rag-min-score-threshold-filtering-20260323.md` — why 0.02, score distribution, and threshold calibration guidance
 
 ## Prevention
 
 - Add `search_mode` to the response contract early; callers should always be able to inspect it.
-- Default to `hybrid` — it handles both fuzzy NL and exact-code queries without threshold tuning.
+- Default to `hybrid` — it handles both fuzzy NL and exact-code queries. Add a `min_score` threshold (default `0.02`) to filter RRF noise; small catalogs compress score ranges and need a floor.
 - Use `'simple'` FTS dictionary for multilingual product catalogs; language-specific stemming breaks barcode/SKU lookup.
 - Add a repository Protocol method for lexical search alongside the vector search method — this enforces both backends stay in sync.
 - Test each mode independently: semantic finds yogurt by description; lexical finds by exact barcode; hybrid surfaces both.
