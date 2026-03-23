@@ -150,6 +150,37 @@ jobs:
             kill "$(cat /tmp/invproc-api.pid)" || true
           fi
 
+  rag-eval-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,api]"
+
+      - name: RAG eval smoke (mock embeddings, memory backend, unit fixture)
+        env:
+          MOCK: "true"
+          IMPORT_REPOSITORY_BACKEND: "memory"
+        run: |
+          python -m invproc rag eval tests/fixtures/rag_queries_unit.json --all-modes --mock
+
   pr-policy:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -217,6 +248,7 @@ jobs:
       - typecheck
       - tests
       - health-smoke
+      - rag-eval-smoke
       - pr-policy
     steps:
       - name: Quality gate passed
@@ -230,6 +262,7 @@ jobs:
       - typecheck
       - tests
       - health-smoke
+      - rag-eval-smoke
     steps:
       - name: Quality gate passed
         run: echo "All required push quality gates passed."
