@@ -538,6 +538,13 @@ def rag_query(
         "--mode",
         help="Search mode: semantic | lexical | hybrid (default: hybrid).",
     ),
+    min_score: float = typer.Option(
+        0.02,
+        "--min-score",
+        min=0.0,
+        max=1.0,
+        help="Minimum RRF score threshold. Results below this are dropped (default: 0.02).",
+    ),
     mock: bool = typer.Option(
         False,
         "--mock",
@@ -546,7 +553,7 @@ def rag_query(
 ) -> None:
     """Query backend-owned catalog embeddings."""
     _, _, retrieval_service = _build_rag_services(mock=mock)
-    result = retrieval_service.query(text, top_k=top_k, mode=mode)  # type: ignore[arg-type]
+    result = retrieval_service.query(text, top_k=top_k, mode=mode, match_threshold=min_score)  # type: ignore[arg-type]
     print(json.dumps(serialize_query_result(result), indent=2))
 
 
