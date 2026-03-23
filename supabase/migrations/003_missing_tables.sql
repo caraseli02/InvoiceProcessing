@@ -86,29 +86,29 @@ alter table product_embedding_sync enable row level security;
 alter table product_catalog_embeddings enable row level security;
 
 create or replace function create_or_reuse_product_sync_row(
-    product_id text,
-    product_snapshot_hash text,
-    embedding_model text,
-    name text,
-    barcode text,
-    category text,
-    uom text,
-    supplier text,
-    price_eur numeric,
-    price_50 numeric,
-    price_70 numeric,
-    price_100 numeric,
-    markup integer,
-    source_import_id text,
-    source_row_id text,
-    invoice_number text,
-    sync_status text,
-    attempt_count integer,
-    last_error text default null,
-    claimed_at timestamptz default null,
-    claimed_by text default null,
-    next_retry_at timestamptz default null,
-    last_synced_at timestamptz default null
+    p_product_id text,
+    p_product_snapshot_hash text,
+    p_embedding_model text,
+    p_name text,
+    p_barcode text,
+    p_category text,
+    p_uom text,
+    p_supplier text,
+    p_price_eur numeric,
+    p_price_50 numeric,
+    p_price_70 numeric,
+    p_price_100 numeric,
+    p_markup integer,
+    p_source_import_id text,
+    p_source_row_id text,
+    p_invoice_number text,
+    p_sync_status text,
+    p_attempt_count integer,
+    p_last_error text default null,
+    p_claimed_at timestamptz default null,
+    p_claimed_by text default null,
+    p_next_retry_at timestamptz default null,
+    p_last_synced_at timestamptz default null
 ) returns table (
     id uuid,
     product_id text,
@@ -169,29 +169,29 @@ begin
         next_retry_at,
         last_synced_at
     ) values (
-        create_or_reuse_product_sync_row.product_id,
-        create_or_reuse_product_sync_row.product_snapshot_hash,
-        create_or_reuse_product_sync_row.embedding_model,
-        create_or_reuse_product_sync_row.name,
-        create_or_reuse_product_sync_row.barcode,
-        create_or_reuse_product_sync_row.category,
-        create_or_reuse_product_sync_row.uom,
-        create_or_reuse_product_sync_row.supplier,
-        create_or_reuse_product_sync_row.price_eur,
-        create_or_reuse_product_sync_row.price_50,
-        create_or_reuse_product_sync_row.price_70,
-        create_or_reuse_product_sync_row.price_100,
-        create_or_reuse_product_sync_row.markup,
-        create_or_reuse_product_sync_row.source_import_id,
-        create_or_reuse_product_sync_row.source_row_id,
-        create_or_reuse_product_sync_row.invoice_number,
-        create_or_reuse_product_sync_row.sync_status,
-        create_or_reuse_product_sync_row.attempt_count,
-        create_or_reuse_product_sync_row.last_error,
-        create_or_reuse_product_sync_row.claimed_at,
-        create_or_reuse_product_sync_row.claimed_by,
-        create_or_reuse_product_sync_row.next_retry_at,
-        create_or_reuse_product_sync_row.last_synced_at
+        p_product_id,
+        p_product_snapshot_hash,
+        p_embedding_model,
+        p_name,
+        p_barcode,
+        p_category,
+        p_uom,
+        p_supplier,
+        p_price_eur,
+        p_price_50,
+        p_price_70,
+        p_price_100,
+        p_markup,
+        p_source_import_id,
+        p_source_row_id,
+        p_invoice_number,
+        p_sync_status,
+        p_attempt_count,
+        p_last_error,
+        p_claimed_at,
+        p_claimed_by,
+        p_next_retry_at,
+        p_last_synced_at
     )
     on conflict (product_id, product_snapshot_hash) do nothing
     returning * into inserted_row;
@@ -231,8 +231,8 @@ begin
 
     select * into existing_row
     from product_embedding_sync
-    where product_embedding_sync.product_id = create_or_reuse_product_sync_row.product_id
-      and product_embedding_sync.product_snapshot_hash = create_or_reuse_product_sync_row.product_snapshot_hash
+    where product_embedding_sync.product_id = p_product_id
+      and product_embedding_sync.product_snapshot_hash = p_product_snapshot_hash
     limit 1;
 
     return query

@@ -6,7 +6,7 @@ import concurrent.futures
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, Protocol
@@ -203,7 +203,8 @@ class CatalogEvalResult:
     total_queries: int
     top_1_hits: int
     top_5_hits: int
-    cases: list[dict[str, Any]]
+    top_k_hits: int = 0
+    cases: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def top_1_hit_rate(self) -> float:
@@ -216,6 +217,12 @@ class CatalogEvalResult:
         if self.total_queries == 0:
             return 0.0
         return self.top_5_hits / self.total_queries
+
+    @property
+    def top_k_hit_rate(self) -> float:
+        if self.total_queries == 0:
+            return 0.0
+        return self.top_k_hits / self.total_queries
 
 
 @dataclass(frozen=True)
@@ -420,27 +427,33 @@ class CatalogRagEvaluator:
         cases: list[CatalogEvalCase],
         *,
         mode: Literal["semantic", "lexical", "hybrid"] = "hybrid",
+        top_k: int = 10,
     ) -> CatalogEvalResult:
         results: list[dict[str, Any]] = []
         top_1_hits = 0
         top_5_hits = 0
+        top_k_hits = 0
         for case in cases:
-            query_result = self.retrieval_service.query(case.query, top_k=5, mode=mode)
+            query_result = self.retrieval_service.query(case.query, top_k=top_k, mode=mode)
             ranked_product_ids = [match.product_id for match in query_result.matches]
             embedding_texts = [match.embedding_text.lower() for match in query_result.matches]
 
             if case.expected_product_id:
                 top_1 = bool(ranked_product_ids[:1] and ranked_product_ids[0] == case.expected_product_id)
                 top_5 = case.expected_product_id in ranked_product_ids[:5]
+                top_k_hit = case.expected_product_id in ranked_product_ids
             else:
                 needle = case.expected_name.lower()
                 top_1 = bool(embedding_texts[:1] and needle in embedding_texts[0])
                 top_5 = any(needle in t for t in embedding_texts[:5])
+                top_k_hit = any(needle in t for t in embedding_texts)
 
             if top_1:
                 top_1_hits += 1
             if top_5:
                 top_5_hits += 1
+            if top_k_hit:
+                top_k_hits += 1
             results.append(
                 {
                     "query": case.query,
@@ -449,6 +462,7 @@ class CatalogRagEvaluator:
                     "ranked_product_ids": ranked_product_ids,
                     "top_1_hit": top_1,
                     "top_5_hit": top_5,
+                    "top_k_hit": top_k_hit,
                     "search_mode": mode,
                 }
             )
@@ -457,15 +471,18 @@ class CatalogRagEvaluator:
             total_queries=len(cases),
             top_1_hits=top_1_hits,
             top_5_hits=top_5_hits,
+            top_k_hits=top_k_hits,
             cases=results,
         )
 
-    def evaluate_all_modes(self, cases: list[CatalogEvalCase]) -> CatalogModeComparisonResult:
+    def evaluate_all_modes(
+        self, cases: list[CatalogEvalCase], *, top_k: int = 10
+    ) -> CatalogModeComparisonResult:
         """Run evaluate() for all three search modes and return side-by-side results."""
         return CatalogModeComparisonResult(
-            semantic=self.evaluate(cases, mode="semantic"),
-            lexical=self.evaluate(cases, mode="lexical"),
-            hybrid=self.evaluate(cases, mode="hybrid"),
+            semantic=self.evaluate(cases, mode="semantic", top_k=top_k),
+            lexical=self.evaluate(cases, mode="lexical", top_k=top_k),
+            hybrid=self.evaluate(cases, mode="hybrid", top_k=top_k),
         )
 
 
@@ -517,8 +534,10 @@ def serialize_eval_result(result: CatalogEvalResult) -> dict[str, Any]:
         "total_queries": result.total_queries,
         "top_1_hits": result.top_1_hits,
         "top_5_hits": result.top_5_hits,
+        "top_k_hits": result.top_k_hits,
         "top_1_hit_rate": result.top_1_hit_rate,
         "top_5_hit_rate": result.top_5_hit_rate,
+        "top_k_hit_rate": result.top_k_hit_rate,
         "cases": result.cases,
     }
 

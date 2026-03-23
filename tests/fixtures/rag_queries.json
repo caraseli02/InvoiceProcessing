@@ -21,9 +21,9 @@
     },
     {
       "query": "ceai de fructe",
-      "expected_product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+      "expected_product_id": "",
       "expected_name": "CEAI",
-      "notes": "Romanian: fruit tea. Semantic should surface CEAI LOVARE or CEAI ZMEURA."
+      "notes": "Romanian: fruit tea. Any CEAI product is acceptable — CEAI ZMEURA or CEAI LOVARE both valid. UUID omitted intentionally: either product satisfies the query."
     },
     {
       "query": "CEAI",

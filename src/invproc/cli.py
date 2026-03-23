@@ -574,6 +574,13 @@ def rag_eval(
         "--all-modes",
         help="Run eval for all three search modes and print a side-by-side comparison.",
     ),
+    top_k: int = typer.Option(
+        10,
+        "--top-k",
+        min=1,
+        max=50,
+        help="Number of results to retrieve per query.",
+    ),
 ) -> None:
     """Evaluate retrieval quality with representative WhatsApp-style queries."""
     if mode not in ("semantic", "lexical", "hybrid"):
@@ -583,10 +590,10 @@ def rag_eval(
     evaluator = CatalogRagEvaluator(retrieval_service)
     cases = load_eval_cases(fixture_path)
     if all_modes:
-        comparison = evaluator.evaluate_all_modes(cases)
+        comparison = evaluator.evaluate_all_modes(cases, top_k=top_k)
         print(json.dumps(serialize_mode_comparison(comparison), indent=2))
     else:
-        result = evaluator.evaluate(cases, mode=mode)  # type: ignore[arg-type]
+        result = evaluator.evaluate(cases, mode=mode, top_k=top_k)  # type: ignore[arg-type]
         print(json.dumps(serialize_eval_result(result), indent=2))
 
 
