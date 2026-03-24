@@ -86,6 +86,7 @@ class CatalogQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     search_mode: Literal["semantic", "lexical", "hybrid"] = Field(default="hybrid")
+    min_score: float = Field(default=0.02, ge=0.0, le=1.0)
 
 
 class CatalogImportRequest(BaseModel):
@@ -413,6 +414,7 @@ async def query_catalog_embeddings(
         payload.query,
         top_k=payload.top_k,
         mode=payload.search_mode,
+        match_threshold=payload.min_score,
     )
     return serialize_query_result(result)
 
