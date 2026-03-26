@@ -1,6 +1,7 @@
 """PDF processing and OCR for invoice extraction."""
 
 import logging
+import re
 from typing import Dict, List, Tuple, Any
 from pathlib import Path
 
@@ -10,6 +11,11 @@ import pytesseract
 from .config import InvoiceConfig
 
 logger = logging.getLogger(__name__)
+
+_DISCOUNT_DETAIL_PATTERN = re.compile(
+    r"^\s*\d{6,}\s+[\d,.]+-\s+\d+%\s+[\d,.]+-\s+[\d,.]+-\s*$"
+)
+_PRODUCT_ROW_PATTERN = re.compile(r"^\s*\d{8,14}\s+.*[A-Za-z].*$")
 
 
 class PDFProcessor:
@@ -69,8 +75,18 @@ class PDFProcessor:
                         logger.info(f"Page {i + 1}: Native text ({len(words)} words)")
                         page_text = self._generate_text_grid(words, page.width)
 
+                    sanitized_page_text = self._sanitize_page_text_for_llm(
+                        page_text, page_number=i + 1
+                    )
+                    if not sanitized_page_text:
+                        logger.info(
+                            "Page %s removed from LLM payload after discount/noise pruning",
+                            i + 1,
+                        )
+                        continue
+
                     full_text_grid.append(
-                        f"--- Page {i + 1} ({'OCR' if len(words) < 10 else 'Native'}) ---\n{page_text}"
+                        f"--- Page {i + 1} ({'OCR' if len(words) < 10 else 'Native'}) ---\n{sanitized_page_text}"
                     )
 
                 return "\n".join(full_text_grid), metadata
@@ -178,3 +194,66 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"OCR failed: {e}", exc_info=True)
             return "[OCR FAILED]"
+
+    def _sanitize_page_text_for_llm(self, page_text: str, *, page_number: int) -> str:
+        """Remove discount-detail noise before sending a page to the LLM."""
+        lines = page_text.splitlines()
+        kept_lines: list[str] = []
+        has_product_rows = False
+        has_final_summary = False
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                kept_lines.append(line)
+                continue
+
+            if self._is_discount_detail_line(stripped):
+                continue
+
+            if stripped.startswith("PL/PA:"):
+                continue
+
+            if self._is_product_row_line(stripped):
+                has_product_rows = True
+
+            if self._is_final_summary_line(stripped):
+                has_final_summary = True
+
+            kept_lines.append(line)
+
+        sanitized = "\n".join(kept_lines).strip()
+        if not sanitized:
+            return ""
+
+        if page_number > 1 and not has_product_rows and not has_final_summary:
+            return ""
+
+        return sanitized
+
+    @staticmethod
+    def _is_discount_detail_line(line: str) -> bool:
+        """Identify discount-only detail rows that don't represent products."""
+        return bool(_DISCOUNT_DETAIL_PATTERN.match(line))
+
+    @staticmethod
+    def _is_product_row_line(line: str) -> bool:
+        """Identify normal product rows that include a code and product name."""
+        if PDFProcessor._is_discount_detail_line(line):
+            return False
+        return bool(_PRODUCT_ROW_PATTERN.match(line))
+
+    @staticmethod
+    def _is_final_summary_line(line: str) -> bool:
+        """Identify end-of-invoice summary lines that must be preserved."""
+        summary_markers = (
+            "Total de plata",
+            "Total cantitate",
+            "Total fara TVA",
+            "Valoare TVA",
+            "Total incl. TVA",
+            "Numerar",
+            "Total platit",
+            "Rest de primit",
+        )
+        return any(marker in line for marker in summary_markers)

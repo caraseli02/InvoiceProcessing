@@ -163,6 +163,25 @@ def test_extract_returns_422_for_malformed_llm_output(client):
     assert "malformed product rows" in response.json()["detail"]
 
 
+def test_extract_returns_422_for_invalid_json_llm_output(client):
+    """Invalid JSON from the model should not bubble up as a 500."""
+    with patch(
+        "invproc.llm_extractor.LLMExtractor.parse_with_llm",
+        side_effect=LLMOutputIntegrityError(
+            "Model returned invalid JSON for this invoice. Please retry."
+        ),
+    ):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            response = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"Authorization": "Bearer test-supabase-jwt"},
+            )
+
+    assert response.status_code == 422
+    assert "invalid JSON" in response.json()["detail"]
+
+
 def test_health_check_structure(client):
     """Test health check returns expected fields."""
     response = client.get("/health")
