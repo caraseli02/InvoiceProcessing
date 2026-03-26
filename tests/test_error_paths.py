@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from invproc.api import limiter
 from invproc.pdf_processor import PDFProcessor
-from invproc.llm_extractor import LLMExtractor
+from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 from invproc.config import get_config, reload_config
 
 from openai import APITimeoutError
@@ -143,13 +143,106 @@ def test_invalid_json_response(llm_extractor):
     llm_extractor.mock = False
 
     mock_response = Mock()
-    mock_response.choices = [Mock(message=Mock(content="{invalid json}"))]
+    mock_response.choices = [
+        Mock(message=Mock(content="{invalid json}"), finish_reason="stop")
+    ]
 
     with patch.object(llm_extractor, "client", create=True) as mock_client:
         mock_client.chat.completions.create.return_value = mock_response
 
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(
+            LLMOutputIntegrityError, match="Model returned invalid JSON"
+        ):
             llm_extractor.parse_with_llm("test grid")
+
+
+def test_invalid_json_response_with_length_finish_reason(llm_extractor):
+    """Truncated model output should be surfaced as a retryable integrity error."""
+    llm_extractor.mock = False
+
+    mock_response = Mock()
+    mock_response.choices = [
+        Mock(message=Mock(content='{"supplier": "Test",'), finish_reason="length")
+    ]
+
+    with patch.object(llm_extractor, "client", create=True) as mock_client:
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with pytest.raises(
+            LLMOutputIntegrityError, match="Model output was truncated"
+        ):
+            llm_extractor.parse_with_llm("test grid")
+
+
+def test_large_invoice_is_split_and_merged(llm_extractor):
+    """Large invoices should be extracted in chunks and merged into one payload."""
+    llm_extractor.mock = False
+
+    page_one = "--- Page 1 (Native) ---\n" + ("\n".join(["ROW 1"] * 700))
+    page_two = "--- Page 2 (Native) ---\n" + ("\n".join(["ROW 2"] * 700))
+    text_grid = f"{page_one}\n{page_two}"
+
+    first_payload = {
+        "supplier": "Test Supplier",
+        "invoice_number": "INV-1",
+        "date": "10-02-2026",
+        "total_amount": None,
+        "currency": "",
+        "products": [
+            {
+                "raw_code": "123",
+                "name": "Product One",
+                "quantity": 1,
+                "unit_price": 10,
+                "total_price": 10,
+                "confidence_score": 0.9,
+            }
+        ],
+    }
+    second_payload = {
+        "supplier": None,
+        "invoice_number": None,
+        "date": None,
+        "total_amount": 30,
+        "currency": "MDL",
+        "products": [
+            {
+                "raw_code": "456",
+                "name": "Product Two",
+                "quantity": 2,
+                "unit_price": 10,
+                "total_price": 20,
+                "confidence_score": 0.8,
+            }
+        ],
+    }
+
+    first_response = Mock()
+    first_response.choices = [
+        Mock(message=Mock(content=json.dumps(first_payload)), finish_reason="stop")
+    ]
+    second_response = Mock()
+    second_response.choices = [
+        Mock(message=Mock(content=json.dumps(second_payload)), finish_reason="stop")
+    ]
+
+    llm_extractor.client = Mock()
+    llm_extractor.client.chat.completions.create.side_effect = [
+        first_response,
+        second_response,
+    ]
+
+    parsed = llm_extractor.parse_with_llm(text_grid)
+
+    assert parsed.supplier == "Test Supplier"
+    assert parsed.invoice_number == "INV-1"
+    assert parsed.total_amount == 30
+    assert parsed.currency == "MDL"
+    assert [product.name for product in parsed.products] == [
+        "Product One",
+        "Product Two",
+    ]
+    assert llm_extractor.client.chat.completions.create.call_count == 2
 
 
 def test_empty_json_response(llm_extractor):
@@ -371,6 +464,60 @@ def test_pdf_processor_client_not_initialized():
     with patch.dict("sys.modules", {"pytesseract": None}):
         # Should not crash, but may raise error on OCR call
         assert processor is not None
+
+
+def test_pdf_processor_prunes_discount_only_page() -> None:
+    """Discount-detail pages without products or final totals should be skipped."""
+    processor = PDFProcessor(get_config())
+
+    page_text = """HEADER
+240035658 29,61- 20% 5,92- 35,53-
+240056826 10,00- 20% 2,00- 12,00-
+Total pagina 12420,27
+"""
+
+    assert processor._sanitize_page_text_for_llm(page_text, page_number=3) == ""
+
+
+def test_pdf_processor_keeps_final_summary_page_after_pruning_discount_rows() -> None:
+    """Final totals must be preserved even if the page begins with discount rows."""
+    processor = PDFProcessor(get_config())
+
+    page_text = """HEADER
+230030845 17,78- 20% 3,56- 21,34-
+250088822 50,04- 20% 10,00- 60,04-
+Total cantitate: 472 Total greutate: 13,026 KG Val. tot. fara TVA: 12148,76
+Total fara TVA % Valoare TVA Total incl. TVA
+1029,44 8 82,36 1111,80
+11119,32 20 2223,87 13343,19
+Total de plata 14454,99
+Numerar 14600,00
+Total platit: 14600,00
+Rest de primit: 145,01-
+"""
+
+    sanitized = processor._sanitize_page_text_for_llm(page_text, page_number=4)
+
+    assert "230030845" not in sanitized
+    assert "250088822" not in sanitized
+    assert "Total de plata 14454,99" in sanitized
+    assert "Total platit: 14600,00" in sanitized
+
+
+def test_pdf_processor_keeps_product_page_and_prunes_plpa_lines() -> None:
+    """Normal product rows should remain while PL/PA noise is removed."""
+    processor = PDFProcessor(get_config())
+
+    page_text = """HEADER
+4840167001399 200G UNT CIOCOLATA JLC 1 BU 5 43,43 43,43 217,15 8 17,35 11,72- 222,78
+PL/PA: 11.2500 / 3.64%
+Total pagina 7504,70
+"""
+
+    sanitized = processor._sanitize_page_text_for_llm(page_text, page_number=1)
+
+    assert "200G UNT CIOCOLATA JLC" in sanitized
+    assert "PL/PA:" not in sanitized
 
 
 def test_llm_extractor_without_api_key():

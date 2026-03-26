@@ -22,3 +22,18 @@ def test_prompt_is_vat_aware_for_total_column() -> None:
     )
     assert "If unsure, set `category_suggestion` to null." in prompt
     assert 'Do NOT guess "General" as a default.' in prompt
+    assert "You may receive one chunk from a larger invoice" in prompt
+    assert "Extract ONLY products that are visible in the provided chunk" in prompt
+
+
+def test_user_prompt_marks_chunk_boundaries() -> None:
+    extractor = LLMExtractor(InvoiceConfig(mock=True))
+
+    prompt = extractor._get_user_prompt(
+        text_grid="--- Page 1 (Native) ---\nLINE",
+        chunk_index=2,
+        chunk_count=3,
+    )
+
+    assert "This is chunk 2 of 3" in prompt
+    assert "leave them null" in prompt

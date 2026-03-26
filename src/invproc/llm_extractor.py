@@ -1,7 +1,9 @@
 """LLM integration for invoice data extraction."""
 
+from json import JSONDecodeError
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
@@ -24,6 +26,10 @@ _CATEGORY_ENUM: tuple[str, ...] = (
     "Cereale",
 )
 _CATEGORY_SET = set(_CATEGORY_ENUM)
+_PAGE_MARKER_PATTERN = re.compile(
+    r"(?=^--- Page \d+ \((?:OCR|Native)\) ---$)", re.MULTILINE
+)
+_MAX_CHUNK_CHARS = 6000
 
 
 class LLMOutputIntegrityError(ValueError):
@@ -65,31 +71,19 @@ class LLMExtractor:
             raise ValueError("OpenAI client not initialized (missing API key)")
 
         try:
-            system_prompt = self._get_system_prompt()
-            user_prompt = f"""Here is invoice text with preserved spatial layout:
+            chunks = self._split_text_grid_into_chunks(text_grid)
+            if len(chunks) > 1:
+                logger.info("Splitting invoice extraction into %s chunks", len(chunks))
 
-{text_grid}
-
-Extract all invoice data following the rules in the system prompt.
-Pay special attention to the column headers to correctly identify quantity vs price columns.
-"""
-
-            completion = self.client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
-
-            content = completion.choices[0].message.content
-            if content is None:
-                raise ValueError("API returned no content")
-            invoice_data_dict = json.loads(content)
-            invoice_data_dict = self._normalize_invoice_payload(invoice_data_dict)
+            chunk_payloads = [
+                self._request_invoice_chunk(
+                    chunk_text=chunk,
+                    chunk_index=index,
+                    chunk_count=len(chunks),
+                )
+                for index, chunk in enumerate(chunks, start=1)
+            ]
+            invoice_data_dict = self._merge_chunk_payloads(chunk_payloads)
             return InvoiceData(**invoice_data_dict)
 
         except APIConnectionError as e:
@@ -104,6 +98,177 @@ Pay special attention to the column headers to correctly identify quantity vs pr
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
             raise
+
+    def _request_invoice_chunk(
+        self,
+        *,
+        chunk_text: str,
+        chunk_index: int,
+        chunk_count: int,
+    ) -> dict[str, Any]:
+        """Request one chunk of invoice text from the model."""
+        if not self.client:
+            raise ValueError("OpenAI client not initialized (missing API key)")
+
+        system_prompt = self._get_system_prompt()
+        user_prompt = self._get_user_prompt(
+            text_grid=chunk_text,
+            chunk_index=chunk_index,
+            chunk_count=chunk_count,
+        )
+
+        completion = self.client.chat.completions.create(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
+        content = completion.choices[0].message.content
+        if content is None:
+            raise ValueError("API returned no content")
+        try:
+            invoice_data_dict = json.loads(content)
+        except JSONDecodeError as e:
+            finish_reason = completion.choices[0].finish_reason
+            logger.error(
+                "LLM returned invalid JSON: chunk=%s/%s finish_reason=%s content_length=%s",
+                chunk_index,
+                chunk_count,
+                finish_reason,
+                len(content),
+            )
+            if finish_reason == "length":
+                raise LLMOutputIntegrityError(
+                    "Model output was truncated before valid JSON was completed. Please retry."
+                ) from e
+            raise LLMOutputIntegrityError(
+                "Model returned invalid JSON for this invoice. Please retry."
+            ) from e
+
+        normalized_payload = self._normalize_invoice_payload(invoice_data_dict)
+        if not normalized_payload.get("products"):
+            logger.warning(
+                "Chunk %s/%s produced no valid products", chunk_index, chunk_count
+            )
+        return normalized_payload
+
+    def _split_text_grid_into_chunks(self, text_grid: str) -> list[str]:
+        """Split large invoice grids into smaller chunks for safer JSON output."""
+        if len(text_grid) <= _MAX_CHUNK_CHARS:
+            return [text_grid]
+
+        page_sections = self._split_page_sections(text_grid)
+        chunks: list[str] = []
+        current_chunk_sections: list[str] = []
+        current_length = 0
+
+        for section in page_sections:
+            for bounded_section in self._split_section_by_lines(section):
+                projected_length = current_length + len(bounded_section) + 1
+                if current_chunk_sections and projected_length > _MAX_CHUNK_CHARS:
+                    chunks.append("\n".join(current_chunk_sections))
+                    current_chunk_sections = [bounded_section]
+                    current_length = len(bounded_section)
+                else:
+                    current_chunk_sections.append(bounded_section)
+                    current_length = projected_length
+
+        if current_chunk_sections:
+            chunks.append("\n".join(current_chunk_sections))
+
+        return chunks or [text_grid]
+
+    def _split_page_sections(self, text_grid: str) -> list[str]:
+        """Split a multi-page text grid on page markers when present."""
+        matches = [match.start() for match in _PAGE_MARKER_PATTERN.finditer(text_grid)]
+        if not matches:
+            return [text_grid]
+
+        sections: list[str] = []
+        for index, start in enumerate(matches):
+            end = matches[index + 1] if index + 1 < len(matches) else len(text_grid)
+            section = text_grid[start:end].strip()
+            if section:
+                sections.append(section)
+        return sections or [text_grid]
+
+    def _split_section_by_lines(self, section: str) -> list[str]:
+        """Split an oversized section on line boundaries while keeping page header."""
+        if len(section) <= _MAX_CHUNK_CHARS:
+            return [section]
+
+        lines = section.splitlines()
+        if not lines:
+            return [section]
+
+        header = lines[0]
+        body_lines = lines[1:] if len(lines) > 1 else []
+        chunks: list[str] = []
+        current_lines: list[str] = [header]
+        current_length = len(header)
+
+        for line in body_lines:
+            line_length = len(line) + 1
+            if len(current_lines) > 1 and current_length + line_length > _MAX_CHUNK_CHARS:
+                chunks.append("\n".join(current_lines))
+                current_lines = [header, line]
+                current_length = len(header) + 1 + len(line)
+            else:
+                current_lines.append(line)
+                current_length += line_length
+
+        if current_lines:
+            chunks.append("\n".join(current_lines))
+
+        return chunks or [section]
+
+    def _merge_chunk_payloads(
+        self, payloads: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Merge chunk-level payloads into one final invoice payload."""
+        merged: dict[str, Any] = {
+            "supplier": None,
+            "invoice_number": None,
+            "date": None,
+            "total_amount": None,
+            "currency": "",
+            "products": [],
+        }
+
+        for payload in payloads:
+            for key in ("supplier", "invoice_number", "date"):
+                current_value = merged.get(key)
+                if current_value is None and key in payload:
+                    merged[key] = payload.get(key)
+                    continue
+
+                next_value = payload.get(key)
+                if not current_value and next_value:
+                    merged[key] = next_value
+
+            total_amount = self._to_float(payload.get("total_amount"))
+            if total_amount is not None and total_amount > 0:
+                merged["total_amount"] = total_amount
+
+            currency = payload.get("currency")
+            if isinstance(currency, str) and currency.strip():
+                merged["currency"] = currency.strip()
+
+            products = payload.get("products", [])
+            if isinstance(products, list):
+                merged["products"].extend(products)
+
+        if self._to_float(merged.get("total_amount")) is None:
+            raise LLMOutputIntegrityError(
+                "Model did not return a valid invoice total across invoice chunks."
+            )
+
+        return merged
 
     def _normalize_invoice_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Normalize LLM JSON payload before strict Pydantic validation."""
@@ -278,8 +443,8 @@ EXTRACTION RULES:
    - Supplier name (e.g., "METRO CASH & CARRY MOLDOVA")
    - Invoice number (e.g., "94")
    - Date (format: DD-MM-YYYY)
-   - Total amount (final total value)
-   - Currency (MDL, EUR, USD, etc.)
+   - Total amount (final total value when visible; null if the provided chunk does not show it)
+   - Currency (MDL, EUR, USD, etc.; empty string if the provided chunk does not show it)
    - List of products with: code, name, optional uom, optional category_suggestion, quantity, unit_price, total_price
 
 1b. CATEGORY SUGGESTION (optional, enum-only):
@@ -315,11 +480,12 @@ EXTRACTION RULES:
    - DO NOT infer product codes from product names
    - If a product name is unclear, use text as-is (don't "clean it up")
 
-5. MULTI-PAGE HANDLING:
-   - You may receive multiple pages concatenated
-   - Look for page total markers
-   - Extract ALL products from ALL pages
-   - Use final total value (last page)
+5. MULTI-PAGE / CHUNK HANDLING:
+   - You may receive one chunk from a larger invoice rather than the full document
+   - Extract ONLY products that are visible in the provided chunk
+   - Do NOT duplicate or invent products from pages/chunks you cannot see
+   - If supplier, invoice_number, date, currency, or final total are not visible in this chunk, return null for missing strings and null/empty string for missing totals/currency
+   - Use the final total value only when it is actually visible in the provided chunk
 
 6. MULTIPLE INTEGER COLUMNS:
    - Some invoices contain nearby integer columns (for example "Unit", "Mod", and "Cant.")
@@ -336,8 +502,8 @@ Return a JSON object with this exact structure:
   "supplier": "string or null",
   "invoice_number": "string or null",
   "date": "DD-MM-YYYY or null",
-  "total_amount": float,
-  "currency": "string (e.g., MDL, EUR)",
+  "total_amount": "float or null when not visible in this chunk",
+  "currency": "string (e.g., MDL, EUR) or empty string when not visible",
   "products": [
     {{
       "raw_code": "string or null",
@@ -351,6 +517,24 @@ Return a JSON object with this exact structure:
     }}
   ]
 }}
+"""
+
+    def _get_user_prompt(
+        self,
+        *,
+        text_grid: str,
+        chunk_index: int,
+        chunk_count: int,
+    ) -> str:
+        """Build the chunk-aware user prompt."""
+        return f"""Here is invoice text with preserved spatial layout:
+
+{text_grid}
+
+This is chunk {chunk_index} of {chunk_count} for a single invoice.
+Extract only the data visible in this chunk, following the system prompt exactly.
+Pay special attention to the column headers to correctly identify quantity vs price columns.
+If supplier, invoice number, date, currency, or final total are not visible here, leave them null (or empty string for currency) instead of guessing.
 """
 
 
