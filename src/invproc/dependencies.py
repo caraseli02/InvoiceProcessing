@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException, Request, status
 from invproc.catalog_sync import CatalogSyncProducer
 from invproc.config import InvoiceConfig
 from invproc.extract_cache import InMemoryExtractCache
+from invproc.extraction_jobs import InMemoryExtractionJobStore
 from invproc.repositories.base import InvoiceImportRepository
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ class AppResources:
 
     config: InvoiceConfig
     extract_cache: InMemoryExtractCache
+    extraction_job_store: InMemoryExtractionJobStore
     supabase_client_provider: SupabaseClientProvider
     import_repository: InvoiceImportRepository
     catalog_sync_producer: CatalogSyncProducer
@@ -48,6 +50,13 @@ def get_extract_cache(
 ) -> InMemoryExtractCache:
     """Get app-scoped extraction cache."""
     return resources.extract_cache
+
+
+def get_extraction_job_store(
+    resources: AppResources = Depends(get_app_resources),
+) -> InMemoryExtractionJobStore:
+    """Get app-scoped extraction job store."""
+    return resources.extraction_job_store
 
 
 def get_supabase_client_provider(

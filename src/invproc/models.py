@@ -242,3 +242,27 @@ class InvoiceImportResponse(BaseModel):
     import_status: Literal["completed", "partial_failed", "failed"]
     rows: List[ImportRowResult]
     summary: ImportSummary
+
+
+class ExtractionAcceptedResponse(BaseModel):
+    """Accepted async extraction response."""
+
+    job_id: str = Field(..., min_length=1)
+    status: Literal["queued", "processing", "succeeded", "failed"]
+    status_url: str = Field(..., min_length=1)
+
+
+class ExtractionJobError(BaseModel):
+    """Stable async extraction error payload."""
+
+    code: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+
+
+class ExtractionJobResponse(BaseModel):
+    """Extraction job polling response."""
+
+    job_id: str = Field(..., min_length=1)
+    status: Literal["queued", "processing", "succeeded", "failed"]
+    result: Optional[InvoiceData] = None
+    error: Optional[ExtractionJobError] = None
