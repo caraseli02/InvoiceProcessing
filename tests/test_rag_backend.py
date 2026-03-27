@@ -529,10 +529,135 @@ def test_api_rag_eval_endpoint_returns_metrics() -> None:
     assert body["top_1_hit_rate"] == 1.0
 
 
+def test_api_rag_eval_endpoint_respects_min_score() -> None:
+    from pydantic import SecretStr
+
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-EVAL-THRESHOLD",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-eval-threshold",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        eval_response = client.post(
+            "/internal/rag/eval",
+            json={
+                "cases": [
+                    {"query": "greek yogurt order", "expected_product_id": "prod_1"}
+                ],
+                "min_score": 1.0,
+            },
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert eval_response.status_code == 200
+    body = eval_response.json()
+    assert body["match_threshold"] == 1.0
+    assert body["top_1_hits"] == 0
+    assert body["cases"][0]["top_results"] == []
+
+
+def test_api_rag_eval_endpoint_uses_service_default_threshold_when_min_score_omitted() -> None:
+    from pydantic import SecretStr
+
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+        rag_match_threshold=1.0,
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-EVAL-DEFAULT-THRESHOLD",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-eval-default-threshold",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        eval_response = client.post(
+            "/internal/rag/eval",
+            json={
+                "cases": [
+                    {"query": "greek yogurt order", "expected_product_id": "prod_1"}
+                ]
+            },
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert eval_response.status_code == 200
+    body = eval_response.json()
+    assert body["match_threshold"] == 1.0
+    assert body["top_1_hits"] == 0
+    assert body["cases"][0]["top_results"] == []
+
+
 def test_cli_rag_query_and_eval_surfaces_return_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     configure_cli_for_memory_backend(monkeypatch)
+    monkeypatch.setattr(cli_module, "_EVAL_SNAPSHOT_DIR", tmp_path / "eval-baselines")
     repository = _get_cli_rag_resources(mock=True).import_repository
     repository.reset()
     seed_synced_product(
@@ -558,7 +683,10 @@ def test_cli_rag_query_and_eval_surfaces_return_json(
     )
 
     query_result = runner.invoke(app, ["rag", "query", "greek yogurt order", "--mock"])
-    eval_result = runner.invoke(app, ["rag", "eval", str(fixture_path), "--mock"])
+    eval_result = runner.invoke(
+        app,
+        ["rag", "eval", str(fixture_path), "--mock", "--json", "--no-save"],
+    )
 
     assert query_result.exit_code == 0
     assert eval_result.exit_code == 0
@@ -1173,6 +1301,73 @@ def test_serialize_mode_comparison_structure() -> None:
         assert "top_1_hit_rate" in out["summary"][mode_key]
 
 
+def test_find_latest_compatible_snapshot_accepts_legacy_multi_mode_shape(tmp_path: Path) -> None:
+    from invproc.rag import find_latest_compatible_snapshot
+
+    baseline = tmp_path / "2026-03-23-rag_queries.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "by_mode": {
+                    "hybrid": {
+                        "total_queries": 1,
+                        "top_1_hits": 1,
+                        "top_5_hits": 1,
+                        "top_k_hits": 1,
+                        "top_1_hit_rate": 1.0,
+                        "top_5_hit_rate": 1.0,
+                        "top_k_hit_rate": 1.0,
+                        "cases": [],
+                    }
+                }
+            }
+        )
+    )
+
+    match = find_latest_compatible_snapshot(
+        tmp_path,
+        fixture_name="rag_queries.json",
+        fixture_hash="fixture-hash",
+        search_mode="hybrid",
+        top_k=10,
+        match_threshold=0.0,
+        mock=False,
+    )
+
+    assert match == baseline
+
+
+def test_cli_eval_default_report_saves_snapshot_and_compares_to_latest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    monkeypatch.setattr(cli_module, "_EVAL_SNAPSHOT_DIR", tmp_path / "eval-baselines")
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+
+    first = runner.invoke(app, ["rag", "eval", str(fixture), "--mock"])
+    second = runner.invoke(app, ["rag", "eval", str(fixture), "--mock"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert "Baseline: none found" in first.output
+    assert "Compared to:" in second.output
+    assert "Regressions: none" in second.output
+    assert len(list((tmp_path / "eval-baselines").glob("*.json"))) == 2
+
+
 def test_cli_eval_all_modes_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """--all-modes flag triggers multi-mode comparison output."""
     configure_cli_for_memory_backend(monkeypatch)
@@ -1191,6 +1386,104 @@ def test_cli_eval_all_modes_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert set(payload["summary"]) == {"semantic", "lexical", "hybrid"}
 
 
+def test_cli_eval_uses_service_default_threshold_when_min_score_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cli_module._CLI_RAG_RESOURCES = None
+    cli_module._CLI_RAG_RESOURCES_KEY = None
+
+    def fake_get_config() -> InvoiceConfig:
+        return InvoiceConfig(
+            _env_file=None,
+            mock=True,
+            catalog_sync_enabled=True,
+            import_repository_backend="memory",
+            supabase_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+            rag_match_threshold=1.0,
+        )
+
+    monkeypatch.setattr(cli_module, "get_config_unvalidated", fake_get_config)
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+
+    result = runner.invoke(app, ["rag", "eval", str(fixture), "--mock", "--json", "--no-save"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["match_threshold"] == 1.0
+    assert payload["top_1_hits"] == 0
+
+
+def test_cli_eval_compare_to_rejects_incompatible_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configure_cli_for_memory_backend(monkeypatch)
+    monkeypatch.setattr(cli_module, "_EVAL_SNAPSHOT_DIR", tmp_path / "eval-baselines")
+    repository = _get_cli_rag_resources(mock=True).import_repository
+    repository.reset()
+    seed_synced_product(
+        repository,
+        product_id="prod_yogurt",
+        name="Greek Yogurt",
+        barcode="123456",
+        category="Dairy",
+        uom="bucket",
+    )
+
+    fixture = tmp_path / "queries.json"
+    fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
+    incompatible_snapshot = tmp_path / "baseline.json"
+    incompatible_snapshot.write_text(
+        json.dumps(
+            {
+                "schema_version": "rag-eval-v1",
+                "generated_at": "2026-03-27T00:00:00+00:00",
+                "fixture_name": fixture.name,
+                "fixture_hash": "different-fixture-hash",
+                "search_mode": "hybrid",
+                "top_k": 10,
+                "match_threshold": 0.0,
+                "mock": True,
+                "result": {
+                    "total_queries": 1,
+                    "top_1_hits": 1,
+                    "top_5_hits": 1,
+                    "top_k_hits": 1,
+                    "top_1_hit_rate": 1.0,
+                    "top_5_hit_rate": 1.0,
+                    "top_k_hit_rate": 1.0,
+                    "search_mode": "hybrid",
+                    "top_k": 10,
+                    "match_threshold": 0.0,
+                    "cases": [],
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        ["rag", "eval", str(fixture), "--mock", "--compare-to", str(incompatible_snapshot)],
+    )
+
+    assert result.exit_code == 1
+    assert "incompatible with the current eval settings" in strip_ansi(result.output)
+
+
 def test_cli_eval_mode_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """--mode flag selects a specific search mode for single-mode eval."""
     configure_cli_for_memory_backend(monkeypatch)
@@ -1201,7 +1494,10 @@ def test_cli_eval_mode_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     fixture = tmp_path / "queries.json"
     fixture.write_text(json.dumps({"queries": [{"query": "yogurt", "expected_product_id": "prod_yogurt"}]}))
 
-    result = runner.invoke(app, ["rag", "eval", str(fixture), "--mock", "--mode", "lexical"])
+    result = runner.invoke(
+        app,
+        ["rag", "eval", str(fixture), "--mock", "--mode", "lexical", "--json", "--no-save"],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.output)

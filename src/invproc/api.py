@@ -104,6 +104,7 @@ class EvalRequest(BaseModel):
     cases: list[dict[str, Any]]
     embedding_model: Optional[str] = None
     top_k: int = Field(default=10, ge=1, le=50)
+    min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
@@ -452,7 +453,12 @@ async def rag_eval_endpoint(
     _ = caller
     cases = [_case_from_dict(case) for case in payload.cases]
     evaluator = CatalogRagEvaluator(retrieval_service)
-    result = await run_in_threadpool(evaluator.evaluate, cases, top_k=payload.top_k)
+    result = await run_in_threadpool(
+        evaluator.evaluate,
+        cases,
+        top_k=payload.top_k,
+        match_threshold=payload.min_score,
+    )
     return serialize_eval_result(result)
 
 

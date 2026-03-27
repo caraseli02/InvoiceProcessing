@@ -3,6 +3,19 @@
 Timestamped retrieval quality snapshots against real Supabase data.
 Run after any change to embeddings, search logic, or catalog seeding.
 
+The CLI now supports a compare-first local workflow:
+
+```bash
+# Run hybrid eval, save a timestamped snapshot, and compare to the latest compatible baseline
+.venv/bin/python -m invproc rag eval tests/fixtures/rag_queries_unit.json --mock
+
+# Print machine-readable JSON instead of the human-readable report
+.venv/bin/python -m invproc rag eval tests/fixtures/rag_queries_unit.json --mock --json
+
+# Compare to a specific saved snapshot
+.venv/bin/python -m invproc rag eval tests/fixtures/rag_queries_unit.json --mock --compare-to docs/eval-baselines/<snapshot>.json
+```
+
 ## Baselines
 
 | Date | Fixture | Hybrid top-1 | Hybrid top-5 | Notes |
@@ -21,6 +34,8 @@ Run after any change to embeddings, search logic, or catalog seeding.
 # Unit fixture (synthetic IDs, mock embeddings)
 ./scripts/eval_rag.sh --unit --mock
 ```
+
+Saved snapshot artifacts now carry fixture, mode, top-k, threshold, and environment metadata so the CLI can reject incompatible comparisons instead of producing misleading deltas.
 
 ## Thresholds
 

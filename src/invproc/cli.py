@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -23,15 +23,23 @@ from .rag import (
     CatalogRagEvaluator,
     CatalogRetrievalService,
     CatalogSyncWorker,
+    build_eval_snapshot,
+    build_eval_snapshot_filename,
     build_rag_worker,
     build_retrieval_service,
     build_sync_status_snapshot,
+    compare_eval_snapshots,
+    compute_eval_fixture_hash,
+    find_latest_compatible_snapshot,
+    load_eval_snapshot,
     load_eval_cases,
+    normalize_eval_snapshot,
     serialize_eval_result,
     serialize_mode_comparison,
     serialize_query_result,
     serialize_sync_status_snapshot,
 )
+from .rag.eval import _snapshot_is_compatible
 from .validator import InvoiceValidator
 from .models import InvoiceData
 
@@ -65,6 +73,88 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _CLI_RAG_RESOURCES: AppResources | None = None
 _CLI_RAG_RESOURCES_KEY: tuple[bool, str, bool, str] | None = None
+_EVAL_SNAPSHOT_DIR = Path(__file__).resolve().parents[2] / "docs" / "eval-baselines"
+
+
+def _format_pct(value: float) -> str:
+    return f"{value * 100:.1f}%"
+
+
+def _render_eval_report(
+    *,
+    payload: dict[str, Any],
+    snapshot_path: Path | None,
+    baseline_path: Path | None,
+    comparison: dict[str, Any] | None,
+) -> str:
+    lines: list[str] = []
+    lines.append("RAG eval summary")
+    lines.append(
+        "Current: "
+        f"top-1 {_format_pct(float(payload['top_1_hit_rate']))} ({payload['top_1_hits']}/{payload['total_queries']}), "
+        f"top-5 {_format_pct(float(payload['top_5_hit_rate']))} ({payload['top_5_hits']}/{payload['total_queries']})"
+    )
+    if snapshot_path is not None:
+        lines.append(f"Saved snapshot: {snapshot_path}")
+    if baseline_path is None:
+        lines.append("Baseline: none found")
+        return "\n".join(lines)
+
+    assert comparison is not None
+    summary = comparison["summary"]
+    lines.append(f"Compared to: {baseline_path}")
+    lines.append(
+        "Delta: "
+        f"top-1 {summary['top_1_hit_rate_delta']:+.1%}, "
+        f"top-5 {summary['top_5_hit_rate_delta']:+.1%}"
+    )
+    counts = summary["counts"]
+    lines.append(
+        "Case changes: "
+        f"{counts['regressed']} regressed, "
+        f"{counts['improved']} improved, "
+        f"{counts['changed']} changed, "
+        f"{counts['unchanged']} unchanged"
+    )
+
+    regressions = [
+        change for change in comparison["cases"]
+        if change["classification"] == "regressed"
+    ]
+    if not regressions:
+        lines.append("Regressions: none")
+        return "\n".join(lines)
+
+    lines.append("Regressions:")
+    for change in regressions:
+        current = change["current"]
+        top_results = current.get("top_results", [])
+        top_result = top_results[0] if top_results else None
+        lines.append(
+            f"- {change['query']} | expected {change['expected']} | "
+            f"baseline top-1/top-5 {change['baseline']['top_1_hit']}/{change['baseline']['top_5_hit']} -> "
+            f"current {current['top_1_hit']}/{current['top_5_hit']}"
+        )
+        lines.append(
+            "  Actual first result: "
+            + (
+                f"{top_result['product_id']} ({top_result['embedding_text']})"
+                if top_result is not None
+                else "<no match>"
+            )
+        )
+        lines.append(
+            "  Top results: "
+            + (
+                ", ".join(
+                    f"{result['product_id']} [{result['score']:.3f}] {result['embedding_text']}"
+                    for result in top_results
+                )
+                if top_results
+                else "<no matches>"
+            )
+        )
+    return "\n".join(lines)
 
 
 @app.command()
@@ -589,6 +679,31 @@ def rag_eval(
         max=50,
         help="Number of results to retrieve per query.",
     ),
+    min_score: Optional[float] = typer.Option(
+        None,
+        "--min-score",
+        min=0.0,
+        max=1.0,
+        help="Minimum retrieval score threshold to apply during eval. Defaults to the runtime retrieval threshold.",
+    ),
+    compare_to: Optional[Path] = typer.Option(
+        None,
+        "--compare-to",
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="Compare the current run against a specific saved snapshot.",
+    ),
+    save_snapshot: bool = typer.Option(
+        True,
+        "--save/--no-save",
+        help="Save a timestamped snapshot under docs/eval-baselines/.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print machine-readable JSON instead of the human-readable report.",
+    ),
 ) -> None:
     """Evaluate retrieval quality with representative WhatsApp-style queries."""
     if mode not in ("semantic", "lexical", "hybrid"):
@@ -597,12 +712,96 @@ def rag_eval(
     _, _, retrieval_service = _build_rag_services(mock=mock)
     evaluator = CatalogRagEvaluator(retrieval_service)
     cases = load_eval_cases(fixture_path)
+    fixture_hash = compute_eval_fixture_hash(fixture_path)
     if all_modes:
-        comparison = evaluator.evaluate_all_modes(cases, top_k=top_k)
+        comparison = evaluator.evaluate_all_modes(cases, top_k=top_k, match_threshold=min_score)
         print(json.dumps(serialize_mode_comparison(comparison), indent=2))
     else:
-        result = evaluator.evaluate(cases, mode=mode, top_k=top_k)  # type: ignore[arg-type]
-        print(json.dumps(serialize_eval_result(result), indent=2))
+        result = evaluator.evaluate(
+            cases,
+            mode=mode,  # type: ignore[arg-type]
+            top_k=top_k,
+            match_threshold=min_score,
+        )
+        payload = serialize_eval_result(result)
+        effective_match_threshold = result.match_threshold
+        snapshot_path: Path | None = None
+        if save_snapshot:
+            _EVAL_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+            snapshot_payload = build_eval_snapshot(
+                fixture_name=fixture_path.name,
+                fixture_hash=fixture_hash,
+                result=result,
+                mock=mock,
+                comparison_target=str(compare_to) if compare_to is not None else None,
+            )
+            snapshot_path = _EVAL_SNAPSHOT_DIR / build_eval_snapshot_filename(
+                fixture_name=fixture_path.name,
+                search_mode=mode,
+            )
+            snapshot_path.write_text(json.dumps(snapshot_payload, indent=2) + "\n")
+
+        baseline_path = compare_to
+        if baseline_path is None:
+            baseline_path = find_latest_compatible_snapshot(
+                _EVAL_SNAPSHOT_DIR,
+                fixture_name=fixture_path.name,
+                fixture_hash=fixture_hash,
+                search_mode=mode,
+                top_k=top_k,
+                match_threshold=effective_match_threshold,
+                mock=mock,
+                exclude=snapshot_path,
+            )
+
+        comparison_payload: dict[str, Any] | None = None
+        if baseline_path is not None:
+            baseline_snapshot = normalize_eval_snapshot(
+                load_eval_snapshot(baseline_path),
+                path=baseline_path,
+                search_mode=mode,
+            )
+            if not _snapshot_is_compatible(
+                baseline_snapshot,
+                fixture_name=fixture_path.name,
+                fixture_hash=fixture_hash,
+                search_mode=mode,
+                top_k=top_k,
+                match_threshold=effective_match_threshold,
+                mock=mock,
+            ):
+                typer.echo(
+                    f"Snapshot '{baseline_path}' is incompatible with the current eval settings.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            current_snapshot = build_eval_snapshot(
+                fixture_name=fixture_path.name,
+                fixture_hash=fixture_hash,
+                result=result,
+                mock=mock,
+                comparison_target=str(baseline_path),
+            )
+            comparison_payload = compare_eval_snapshots(
+                current=current_snapshot,
+                baseline=baseline_snapshot,
+            )
+            payload["comparison"] = comparison_payload
+            payload["baseline_snapshot"] = str(baseline_path)
+        if snapshot_path is not None:
+            payload["snapshot_path"] = str(snapshot_path)
+
+        if json_output:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(
+                _render_eval_report(
+                    payload=payload,
+                    snapshot_path=snapshot_path,
+                    baseline_path=baseline_path,
+                    comparison=comparison_payload,
+                )
+            )
 
 
 @rag_app.command("status")
