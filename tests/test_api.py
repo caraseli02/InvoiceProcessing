@@ -2,6 +2,8 @@
 
 import os
 from pathlib import Path
+import threading
+import time
 from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from invproc.api import limiter
 from invproc.config import InvoiceConfig
 from invproc.extract_cache import InMemoryExtractCache
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
+from invproc.models import InvoiceData
 
 
 @pytest.fixture(autouse=True)
@@ -367,3 +370,145 @@ def test_extract_does_not_cache_422_errors(
     assert first.status_code == 422
     assert second.status_code == 422
     assert call_count == 2
+
+
+def _mock_invoice_data() -> InvoiceData:
+    return InvoiceData(
+        supplier="MOCK SUPPLIER",
+        invoice_number="INV-ASYNC",
+        date="27-03-2026",
+        total_amount=10.0,
+        currency="MDL",
+        products=[],
+    )
+
+
+def _wait_for_job_terminal_state(client: TestClient, job_id: str) -> TestClient:
+    deadline = time.time() + 2
+    last_response = None
+    while time.time() < deadline:
+        last_response = client.get(
+            f"/invoice/extraction-jobs/{job_id}",
+            headers={"Authorization": "Bearer test-supabase-jwt"},
+        )
+        assert last_response.status_code == 200
+        if last_response.json()["status"] in {"succeeded", "failed"}:
+            return last_response
+        time.sleep(0.02)
+    assert last_response is not None
+    return last_response
+
+
+def test_extract_returns_202_for_async_routed_invoice(
+    client: TestClient,
+    api_test_config: InvoiceConfig,
+) -> None:
+    api_test_config.extract_async_page_threshold = 1
+
+    with open("test_invoices/invoice-test.pdf", "rb") as f:
+        response = client.post(
+            "/extract",
+            files={"file": ("test.pdf", f, "application/pdf")},
+            headers={"Authorization": "Bearer test-supabase-jwt"},
+        )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["job_id"].startswith("ext_")
+    assert payload["status"] in {"queued", "processing", "succeeded"}
+    assert payload["status_url"] == f"/invoice/extraction-jobs/{payload['job_id']}"
+    assert response.headers["Location"] == payload["status_url"]
+    assert response.headers["Retry-After"] == str(api_test_config.extract_job_retry_after_sec)
+
+
+def test_extract_job_endpoint_returns_terminal_success(
+    client: TestClient,
+    api_test_config: InvoiceConfig,
+) -> None:
+    api_test_config.extract_async_page_threshold = 1
+
+    with patch("invproc.api.run_extract_pipeline") as mock_run_extract_pipeline:
+        mock_run_extract_pipeline.return_value = type(
+            "Result",
+            (),
+            {"invoice_data": _mock_invoice_data(), "cache_status": "off"},
+        )()
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            submit = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"Authorization": "Bearer test-supabase-jwt"},
+            )
+
+    assert submit.status_code == 202
+    job_id = submit.json()["job_id"]
+    status_response = _wait_for_job_terminal_state(client, job_id)
+    payload = status_response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["result"]["invoice_number"] == "INV-ASYNC"
+    assert payload["error"] is None
+
+
+def test_extract_job_endpoint_returns_terminal_failure(
+    client: TestClient,
+    api_test_config: InvoiceConfig,
+) -> None:
+    api_test_config.extract_async_page_threshold = 1
+
+    with patch(
+        "invproc.api.run_extract_pipeline",
+        side_effect=LLMOutputIntegrityError("LLM returned malformed rows"),
+    ):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            submit = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"Authorization": "Bearer test-supabase-jwt"},
+            )
+
+    assert submit.status_code == 202
+    job_id = submit.json()["job_id"]
+    status_response = _wait_for_job_terminal_state(client, job_id)
+    payload = status_response.json()
+    assert payload["status"] == "failed"
+    assert payload["error"]["code"] == "EXTRACTION_FAILED"
+    assert payload["result"] is None
+
+
+def test_extract_duplicate_async_submit_reuses_canonical_job(
+    client: TestClient,
+    api_test_config: InvoiceConfig,
+) -> None:
+    api_test_config.extract_async_page_threshold = 1
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_extract(*_args, **_kwargs):
+        started.set()
+        release.wait(timeout=1)
+        return type(
+            "Result",
+            (),
+            {"invoice_data": _mock_invoice_data(), "cache_status": "off"},
+        )()
+
+    with patch("invproc.api.run_extract_pipeline", side_effect=slow_extract):
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            first = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"Authorization": "Bearer test-supabase-jwt"},
+            )
+        started.wait(timeout=1)
+        with open("test_invoices/invoice-test.pdf", "rb") as f:
+            second = client.post(
+                "/extract",
+                files={"file": ("test.pdf", f, "application/pdf")},
+                headers={"Authorization": "Bearer test-supabase-jwt"},
+            )
+        release.set()
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["job_id"] == second.json()["job_id"]

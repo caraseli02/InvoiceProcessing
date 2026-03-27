@@ -251,6 +251,39 @@ class InvoiceConfig(BaseSettings):
         description="Maximum number of cached extraction entries",
     )
 
+    extract_async_enabled: bool = Field(
+        default=True,
+        description="Enable hybrid sync/async routing for slow extraction requests.",
+    )
+
+    extract_async_page_threshold: int = Field(
+        default=4,
+        ge=1,
+        le=50,
+        description="Route extraction async when PDF page count meets or exceeds this threshold.",
+    )
+
+    extract_async_file_size_bytes_threshold: int = Field(
+        default=250000,
+        ge=1,
+        le=50_000_000,
+        description="Route extraction async when uploaded PDF byte size meets or exceeds this threshold.",
+    )
+
+    extract_job_retry_after_sec: int = Field(
+        default=2,
+        ge=1,
+        le=60,
+        description="Suggested polling interval in seconds for async extraction jobs.",
+    )
+
+    extract_job_ttl_sec: int = Field(
+        default=86400,
+        ge=60,
+        le=604800,
+        description="Retention period for terminal extraction jobs in seconds.",
+    )
+
     catalog_sync_enabled: bool = Field(
         default=False,
         description="Enable durable catalog sync intent emission after successful imports",

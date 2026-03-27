@@ -7,6 +7,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+import threading
 import uuid
 from typing import Any, AsyncIterator, Dict, Literal, Optional, cast
 
@@ -44,13 +45,20 @@ from invproc.dependencies import (
     get_app_config,
     get_catalog_sync_producer,
     get_extract_cache,
+    get_extraction_job_store,
     get_import_repository,
 )
 from invproc.extract_cache import InMemoryExtractCache
+from invproc.extraction_jobs import (
+    InMemoryExtractionJobStore,
+    inspect_extract_routing,
+)
 from invproc.exceptions import ContractError
 from invproc.import_service import InvoiceImportService
 from invproc.llm_extractor import LLMExtractor, LLMOutputIntegrityError
 from invproc.models import (
+    ExtractionAcceptedResponse,
+    ExtractionJobResponse,
     InvoiceData,
     InvoiceImportRequest,
     InvoicePreviewPricingRequest,
@@ -69,7 +77,7 @@ from invproc.rag import (
     serialize_query_result,
     serialize_sync_status_snapshot,
 )
-from invproc.services.extract_service import run_extract_pipeline
+from invproc.services.extract_service import build_extract_cache_key, run_extract_pipeline
 from invproc.services.upload_service import save_upload_with_limit
 from invproc.validator import InvoiceValidator
 from invproc.repositories.base import InvoiceImportRepository
@@ -132,6 +140,7 @@ def build_app_resources(config: InvoiceConfig) -> AppResources:
         ttl_sec=config.extract_cache_ttl_sec,
         max_entries=config.extract_cache_max_entries,
     )
+    extraction_job_store = InMemoryExtractionJobStore(ttl_sec=config.extract_job_ttl_sec)
     supabase_client_provider = SupabaseClientProvider(config)
     import_repository: InvoiceImportRepository
     if config.import_repository_backend == "supabase":
@@ -152,6 +161,7 @@ def build_app_resources(config: InvoiceConfig) -> AppResources:
     return AppResources(
         config=config,
         extract_cache=extract_cache,
+        extraction_job_store=extraction_job_store,
         supabase_client_provider=supabase_client_provider,
         import_repository=import_repository,
         catalog_sync_producer=catalog_sync_producer,
@@ -206,6 +216,87 @@ def get_rag_retrieval_service(
     return build_retrieval_service(repository=repository, config=config)
 
 
+def _extract_job_status_url(job_id: str) -> str:
+    return f"/invoice/extraction-jobs/{job_id}"
+
+
+def _build_extract_job_accepted_payload(job_id: str, status_value: str) -> dict[str, str]:
+    payload = ExtractionAcceptedResponse(
+        job_id=job_id,
+        status=cast(Literal["queued", "processing", "succeeded", "failed"], status_value),
+        status_url=_extract_job_status_url(job_id),
+    )
+    return payload.model_dump(mode="json")
+
+
+def _build_extract_job_error(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def _build_extract_job_response(record: Any) -> ExtractionJobResponse:
+    return ExtractionJobResponse(
+        job_id=record.job_id,
+        status=record.status,
+        result=record.result_payload,
+        error=record.error_payload,
+    )
+
+
+def _run_extract_job(
+    *,
+    job_store: InMemoryExtractionJobStore,
+    job_id: str,
+    config: InvoiceConfig,
+    temp_pdf_path: Path,
+    file_hash: str,
+    pdf_processor: PDFProcessor,
+    llm_extractor: LLMExtractor,
+    validator: InvoiceValidator,
+    extract_cache: InMemoryExtractCache,
+) -> None:
+    """Execute one async extraction job and update app-scoped job state."""
+    try:
+        job_store.mark_processing(job_id=job_id)
+        result = run_extract_pipeline(
+            config=config,
+            pdf_path=temp_pdf_path,
+            file_hash=file_hash,
+            pdf_processor=pdf_processor,
+            llm_extractor=llm_extractor,
+            validator=validator,
+            cache=extract_cache,
+        )
+        job_store.mark_succeeded(
+            job_id=job_id,
+            result_payload=result.invoice_data.model_dump(mode="json"),
+        )
+    except APITimeoutError:
+        job_store.mark_failed(
+            job_id=job_id,
+            error_payload=_build_extract_job_error(
+                "EXTRACTION_TIMEOUT",
+                "Model request timed out. Please retry.",
+            ),
+        )
+    except LLMOutputIntegrityError as exc:
+        job_store.mark_failed(
+            job_id=job_id,
+            error_payload=_build_extract_job_error("EXTRACTION_FAILED", str(exc)),
+        )
+    except Exception:
+        logger.exception("Async extraction job failed: job_id=%s", job_id)
+        job_store.mark_failed(
+            job_id=job_id,
+            error_payload=_build_extract_job_error(
+                "EXTRACTION_FAILED",
+                "Unable to extract invoice",
+            ),
+        )
+    finally:
+        if temp_pdf_path.exists():
+            temp_pdf_path.unlink()
+
+
 async def add_observability_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Attach debugging headers to all responses (including /health)."""
     response = await call_next(request)
@@ -237,6 +328,7 @@ async def health_check() -> Dict[str, Any]:
     response_model=InvoiceData,
     status_code=status.HTTP_200_OK,
     responses={
+        202: {"description": "Extraction accepted for async processing", "model": ExtractionAcceptedResponse},
         401: {"description": "Invalid or expired token"},
         400: {"description": "Invalid PDF file"},
         422: {"description": "Unprocessable extraction output"},
@@ -254,13 +346,13 @@ async def extract_invoice(
     user: dict[str, Any] = Depends(verify_supabase_jwt),
     config: InvoiceConfig = Depends(get_app_config),
     extract_cache: InMemoryExtractCache = Depends(get_extract_cache),
+    extraction_job_store: InMemoryExtractionJobStore = Depends(get_extraction_job_store),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     llm_extractor: LLMExtractor = Depends(get_llm_extractor),
     validator: InvoiceValidator = Depends(get_validator),
-) -> InvoiceData:
+) -> InvoiceData | JSONResponse:
     """Extract structured data from uploaded invoice PDF."""
     _ = request
-    _ = user
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -271,17 +363,77 @@ async def extract_invoice(
     temp_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename).name
     temp_pdf_path = temp_dir / f"{uuid.uuid4()}-{safe_name}"
+    should_cleanup_temp_file = True
 
     try:
         max_file_size = config.max_pdf_size_mb * 1024 * 1024
 
         # Stream upload to disk and enforce size limit by actual file bytes.
-        _, file_hash = await run_in_threadpool(
+        total_bytes, file_hash = await run_in_threadpool(
             save_upload_with_limit, file.file, temp_pdf_path, max_file_size
         )
 
         if config.extract_cache_debug_headers:
             response.headers["X-Extract-File-Hash"] = file_hash[:12]
+
+        dedupe_key = build_extract_cache_key(config, file_hash)
+        if config.extract_cache_enabled:
+            extract_cache.configure(
+                ttl_sec=config.extract_cache_ttl_sec,
+                max_entries=config.extract_cache_max_entries,
+            )
+            cached_payload = extract_cache.get(dedupe_key)
+            if cached_payload is not None:
+                response.headers["X-Extract-Cache"] = "hit"
+                return InvoiceData(**cached_payload)
+
+        routing = await run_in_threadpool(
+            inspect_extract_routing,
+            pdf_path=temp_pdf_path,
+            file_size_bytes=total_bytes,
+            page_threshold=config.extract_async_page_threshold,
+            file_size_threshold=config.extract_async_file_size_bytes_threshold,
+        )
+
+        owner_id = str(user["id"])
+        if config.extract_async_enabled and routing.should_route_async:
+            job_record, created = extraction_job_store.create_or_get(
+                owner_id=owner_id,
+                dedupe_key=dedupe_key,
+                filename=safe_name,
+            )
+            if created:
+                worker = threading.Thread(
+                    target=_run_extract_job,
+                    kwargs={
+                        "job_store": extraction_job_store,
+                        "job_id": job_record.job_id,
+                        "config": config,
+                        "temp_pdf_path": temp_pdf_path,
+                        "file_hash": file_hash,
+                        "pdf_processor": pdf_processor,
+                        "llm_extractor": llm_extractor,
+                        "validator": validator,
+                        "extract_cache": extract_cache,
+                    },
+                    daemon=True,
+                )
+                worker.start()
+                should_cleanup_temp_file = False
+
+            payload = _build_extract_job_accepted_payload(
+                job_record.job_id,
+                job_record.status,
+            )
+            headers = {
+                "Location": payload["status_url"],
+                "Retry-After": str(config.extract_job_retry_after_sec),
+            }
+            return JSONResponse(
+                status_code=status.HTTP_202_ACCEPTED,
+                content=payload,
+                headers=headers,
+            )
 
         result = await run_in_threadpool(
             run_extract_pipeline,
@@ -318,7 +470,7 @@ async def extract_invoice(
             detail=f"Processing failed: {str(e)}",
         )
     finally:
-        if temp_pdf_path.exists():
+        if should_cleanup_temp_file and temp_pdf_path.exists():
             await run_in_threadpool(temp_pdf_path.unlink)
 
 
@@ -343,6 +495,35 @@ async def preview_invoice_pricing(
     _ = request
     _ = user
     return await run_in_threadpool(import_service.preview_pricing, payload)
+
+
+@router.get(
+    "/invoice/extraction-jobs/{job_id}",
+    response_model=ExtractionJobResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        401: {"description": "Invalid or expired token"},
+        404: {"description": "Job not found or expired"},
+    },
+)
+async def get_extraction_job(
+    job_id: str,
+    user: dict[str, Any] = Depends(verify_supabase_jwt),
+    extraction_job_store: InMemoryExtractionJobStore = Depends(get_extraction_job_store),
+) -> ExtractionJobResponse | JSONResponse:
+    """Return extraction job status for the submitting principal."""
+    record = extraction_job_store.get_for_owner(job_id=job_id, owner_id=str(user["id"]))
+    if record is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": _build_extract_job_error(
+                    "JOB_EXPIRED",
+                    "This extraction job is no longer available",
+                )
+            },
+        )
+    return _build_extract_job_response(record)
 
 
 @router.post(

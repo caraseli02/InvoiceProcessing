@@ -11,8 +11,14 @@ from invproc.api import create_app
 from invproc.auth import SupabaseClientProvider
 from invproc.catalog_sync import NoopCatalogSyncProducer
 from invproc.config import InvoiceConfig
-from invproc.dependencies import AppResources, get_app_config, get_extract_cache
+from invproc.dependencies import (
+    AppResources,
+    get_app_config,
+    get_extract_cache,
+    get_extraction_job_store,
+)
 from invproc.extract_cache import InMemoryExtractCache
+from invproc.extraction_jobs import InMemoryExtractionJobStore
 from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 TEST_SUPABASE_TOKEN = "test-supabase-jwt"
@@ -50,6 +56,11 @@ def api_test_config() -> InvoiceConfig:
         extract_cache_enabled=False,
         extract_cache_ttl_sec=3600,
         extract_cache_max_entries=64,
+        extract_async_enabled=True,
+        extract_async_page_threshold=4,
+        extract_async_file_size_bytes_threshold=250000,
+        extract_job_retry_after_sec=2,
+        extract_job_ttl_sec=3600,
     )
 
 
@@ -63,10 +74,19 @@ def api_test_extract_cache(api_test_config: InvoiceConfig) -> InMemoryExtractCac
 
 
 @pytest.fixture
+def api_test_extraction_job_store(
+    api_test_config: InvoiceConfig,
+) -> InMemoryExtractionJobStore:
+    """Provide a test-owned extraction job store."""
+    return InMemoryExtractionJobStore(ttl_sec=api_test_config.extract_job_ttl_sec)
+
+
+@pytest.fixture
 def api_test_app(
     monkeypatch: pytest.MonkeyPatch,
     api_test_config: InvoiceConfig,
     api_test_extract_cache: InMemoryExtractCache,
+    api_test_extraction_job_store: InMemoryExtractionJobStore,
 ) -> Generator[Any, None, None]:
     """Create a fresh FastAPI app with explicit dependency overrides."""
     monkeypatch.setenv("MOCK", "true")
@@ -74,6 +94,7 @@ def api_test_app(
     resources = AppResources(
         config=api_test_config,
         extract_cache=api_test_extract_cache,
+        extraction_job_store=api_test_extraction_job_store,
         supabase_client_provider=SupabaseClientProvider(api_test_config),
         import_repository=InMemoryInvoiceImportRepository(),
         catalog_sync_producer=NoopCatalogSyncProducer(),
@@ -81,6 +102,9 @@ def api_test_app(
     app = create_app(resources=resources)
     app.dependency_overrides[get_app_config] = lambda: api_test_config
     app.dependency_overrides[get_extract_cache] = lambda: api_test_extract_cache
+    app.dependency_overrides[get_extraction_job_store] = (
+        lambda: api_test_extraction_job_store
+    )
     try:
         yield app
     finally:
