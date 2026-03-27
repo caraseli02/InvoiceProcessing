@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from invproc.config import InvoiceConfig
-from invproc.rag.eval import CatalogEvalResult, CatalogModeComparisonResult
+from invproc.rag.eval import CatalogModeComparisonResult, serialize_eval_result
 from invproc.rag.retrieval import (
     CatalogQueryResult,
     CatalogRetrievalService,
@@ -35,20 +35,6 @@ def serialize_query_result(result: CatalogQueryResult) -> dict[str, Any]:
             }
             for match in result.matches
         ],
-    }
-
-
-def serialize_eval_result(result: CatalogEvalResult) -> dict[str, Any]:
-    """Convert evaluation metrics into JSON-friendly output."""
-    return {
-        "total_queries": result.total_queries,
-        "top_1_hits": result.top_1_hits,
-        "top_5_hits": result.top_5_hits,
-        "top_k_hits": result.top_k_hits,
-        "top_1_hit_rate": result.top_1_hit_rate,
-        "top_5_hit_rate": result.top_5_hit_rate,
-        "top_k_hit_rate": result.top_k_hit_rate,
-        "cases": result.cases,
     }
 
 

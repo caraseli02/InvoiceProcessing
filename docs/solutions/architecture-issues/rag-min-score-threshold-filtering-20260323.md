@@ -4,6 +4,7 @@ category: "architecture-issues"
 date: "2026-03-23"
 tags: ["rag", "hybrid-search", "rrf", "score-threshold", "retrieval-quality", "bm25", "pgvector"]
 components: ["src/invproc/api.py", "src/invproc/cli.py", "CatalogRetrievalService", "CatalogQueryRequest"]
+last_refreshed: "2026-03-27"
 symptoms:
   - "Query for 'lapte' (milk) returned 'TURTA DULCE VISINA' (cherry gingerbread) at position 10"
   - "Top-2 relevant results had RRF scores ~0.033; positions 3-20 had flat noise band 0.013-0.016"
@@ -48,7 +49,7 @@ With `match_threshold=0.0`, all 20 results return. With `match_threshold=0.02`, 
 
 ## Fix
 
-**`src/invproc/api.py` — add `min_score` to request model:**
+**`src/invproc/api.py` — add `min_score` to query request model:**
 
 ```python
 class CatalogQueryRequest(BaseModel):
@@ -88,11 +89,20 @@ result = retrieval_service.query(text, top_k=top_k, mode=mode, match_threshold=m
 
 `"lapte"` query returns 2 results (both LAPTE CONDEN variants) instead of 20. The default `0.02` sits above the noise floor (~0.013–0.016) and below the relevant cluster (~0.033).
 
+This learning still applies to query-time retrieval surfaces:
+
+- `POST /internal/rag/query`
+- `python -m invproc rag query ...`
+
+It does **not** define the default behavior for `rag eval` or `POST /internal/rag/eval`. As of March 27, 2026, eval inherits the retrieval service's runtime threshold when `min_score` is omitted, and only overrides it when the caller passes an explicit value.
+
 ## Caveats
 
 - Default `0.02` is tuned for a ~20-product catalog. As the catalog grows, RRF score distributions shift — re-evaluate the threshold after significant catalog growth and after running `./scripts/eval_rag.sh`.
 - RRF scores are relative rank weights, not raw cosine similarity. The right threshold value depends on catalog size, not on semantic distance.
-- Applying `min_score` too aggressively can drop valid matches and push eval metrics below documented thresholds (top-1 ≥ 55%, top-5 ≥ 85%). Re-run baseline eval after changing the default.
+- Applying `min_score` too aggressively can drop valid matches and push eval metrics below documented thresholds (top-1 ≥ 55%, top-5 ≥ 85%). Re-run baseline eval after changing query defaults or runtime threshold configuration.
+- Query and eval now intentionally differ in one important way:
+  query surfaces still default `min_score` to `0.02`, while eval surfaces treat `min_score` as optional and inherit the runtime retrieval threshold when omitted.
 
 ## Prevention
 
@@ -100,11 +110,12 @@ result = retrieval_service.query(text, top_k=top_k, mode=mode, match_threshold=m
 
 **Detection test:** Integration test — call the API with `min_score=0.9` on a catalog where all products score < 0.9 and assert the result set is empty. Fails immediately if the field is not wired through.
 
-**Checklist item:** "Every service-level threshold param is exposed in the API request model AND the CLI command — verify both, not just one."
+**Checklist item:** "Every service-level threshold param is exposed in the API request model AND the CLI command — verify both, not just one. If one surface intentionally inherits the runtime default while another sets an explicit default, document that difference."
 
 ## See Also
 
 - [Hybrid RAG BM25 + pgvector + RRF scoring model](hybrid-rag-bm25-vector-rrf-search-mode.md) — explains RRF score computation; threshold behaviour differs by mode
 - [API/CLI parity checklist](../integration-issues/feature-propagation-gaps-sql-param-collision-dataclass-cli-parity.md) — governs how new params must propagate through all surfaces
 - [Eval endpoint contract](hybrid-search-concurrent-dispatch-rag-eval-endpoint.md) — use `/internal/rag/eval` to validate threshold impact on hit rates
-- [Eval baselines](../../eval-baselines/README.md) — re-run `./scripts/eval_rag.sh` after changing `min_score` default; thresholds are top-1 ≥ 55%, top-5 ≥ 85%
+- [Compare-first RAG eval needed snapshot compatibility and threshold parity](rag-eval-snapshot-baseline-comparison-cli-workflow-20260327.md) — documents why eval must inherit the runtime threshold when `min_score` is omitted and why explicit baselines must be compatibility-checked
+- [Eval baselines](../../eval-baselines/README.md) — re-run `./scripts/eval_rag.sh` after changing query defaults or runtime threshold configuration; eval uses the effective runtime threshold unless explicitly overridden
