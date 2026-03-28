@@ -151,6 +151,14 @@ class InvoiceImportRepository(Protocol):
     def update_product(self, product_id: str, data: UpsertProductInput) -> ProductRecord:
         ...
 
+    def backfill_product_category(
+        self,
+        *,
+        product_id: str,
+        category: str,
+    ) -> ProductRecord:
+        ...
+
     def add_stock_movement_in(
         self,
         *,

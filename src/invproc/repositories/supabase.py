@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
 from supabase import Client
 
 from invproc.import_service import normalize_name
+from invproc.rag.retrieval import cosine_similarity
 from invproc.repositories.base import (
     InvoiceImportRepository,
     ProductCatalogEmbeddingMatch,
@@ -32,6 +34,42 @@ def _parse_embedding(value: Any) -> list[float]:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _bm25_scores(
+    query_text: str,
+    documents: list[str],
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> list[float]:
+    query_tokens = query_text.lower().split()
+    if not query_tokens or not documents:
+        return [0.0] * len(documents)
+
+    tokenized = [doc.lower().split() for doc in documents]
+    n = len(documents)
+    avgdl = sum(len(t) for t in tokenized) / n
+
+    df: dict[str, int] = {}
+    for doc_tokens in tokenized:
+        for token in set(doc_tokens):
+            df[token] = df.get(token, 0) + 1
+
+    scores: list[float] = []
+    for doc_tokens in tokenized:
+        tf_map: dict[str, int] = {}
+        for token in doc_tokens:
+            tf_map[token] = tf_map.get(token, 0) + 1
+        dl = len(doc_tokens)
+        score = 0.0
+        for token in query_tokens:
+            if token not in df:
+                continue
+            tf = tf_map.get(token, 0)
+            idf = math.log((n - df[token] + 0.5) / (df[token] + 0.5) + 1.0)
+            score += idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * dl / avgdl))
+        scores.append(score)
+    return scores
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -113,6 +151,28 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
             "updated_at": _utcnow().isoformat(),
         }
         row = self._update_one(self.products_table, payload, filters=[("id", product_id)])
+        return self._map_product(row)
+
+    def backfill_product_category(
+        self,
+        *,
+        product_id: str,
+        category: str,
+    ) -> ProductRecord:
+        rows = self._select(self.products_table, filters=[("id", product_id)], limit=1)
+        if not rows:
+            raise KeyError(f"Unknown product_id: {product_id}")
+        current = self._map_product(rows[0])
+        if current.category is not None:
+            return current
+        row = self._update_one(
+            self.products_table,
+            {
+                "category": category,
+                "updated_at": _utcnow().isoformat(),
+            },
+            filters=[("id", product_id)],
+        )
         return self._map_product(row)
 
     def add_stock_movement_in(
@@ -287,10 +347,11 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         filters: list[tuple[str, Any]] = []
         if embedding_model is not None:
             filters.append(("embedding_model", embedding_model))
-        return [
+        records = [
             self._map_product_catalog_embedding(row)
             for row in self._select(self.embeddings_table, filters=filters)
         ]
+        return sorted(records, key=lambda record: (record.updated_at, record.created_at))
 
     def search_product_catalog_embeddings(
         self,
@@ -299,6 +360,7 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
+        candidate_count = max(top_k * 10, top_k)
         rows = cast(
             list[dict[str, Any]],
             self.client.rpc(
@@ -306,21 +368,28 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
                 {
                     "p_query_embedding": query_embedding,
                     "p_embedding_model": embedding_model,
-                    "p_match_count": top_k,
+                    "p_match_count": candidate_count,
                 },
             ).execute().data,
         )
-        return [
+        candidate_ids = [str(row["product_id"]) for row in rows]
+        records = self._latest_product_catalog_embeddings_for_products(
+            embedding_model=embedding_model,
+            product_ids=candidate_ids,
+        )
+        matches = [
             ProductCatalogEmbeddingMatch(
-                product_id=str(row["product_id"]),
-                product_snapshot_hash=str(row["product_snapshot_hash"]),
-                embedding_model=str(row["embedding_model"]),
-                embedding_text=str(row["embedding_text"]),
-                metadata=dict(row["metadata"]),
-                score=float(row["score"]),
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                embedding_text=record.embedding_text,
+                metadata=dict(record.metadata),
+                score=cosine_similarity(query_embedding, record.embedding),
             )
-            for row in rows
+            for record in records
         ]
+        matches.sort(key=lambda match: match.score, reverse=True)
+        return matches[:top_k]
 
     def search_product_catalog_embeddings_lexical(
         self,
@@ -329,6 +398,7 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
+        candidate_count = max(top_k * 10, top_k)
         rows = cast(
             list[dict[str, Any]],
             self.client.rpc(
@@ -336,21 +406,76 @@ class SupabaseInvoiceImportRepository(InvoiceImportRepository):
                 {
                     "p_query_text": query_text,
                     "p_embedding_model": embedding_model,
-                    "p_match_count": top_k,
+                    "p_match_count": candidate_count,
                 },
             ).execute().data,
         )
+        candidate_ids = [str(row["product_id"]) for row in rows]
+        records = self._latest_product_catalog_embeddings_for_products(
+            embedding_model=embedding_model,
+            product_ids=candidate_ids,
+        )
+        if not records:
+            return []
+        documents = [record.embedding_text for record in records]
+        scores = _bm25_scores(query_text, documents)
+        ranked = sorted(zip(records, scores), key=lambda pair: pair[1], reverse=True)
         return [
             ProductCatalogEmbeddingMatch(
-                product_id=str(row["product_id"]),
-                product_snapshot_hash=str(row["product_snapshot_hash"]),
-                embedding_model=str(row["embedding_model"]),
-                embedding_text=str(row["embedding_text"]),
-                metadata=dict(row["metadata"]),
-                score=float(row["score"]),
+                product_id=record.product_id,
+                product_snapshot_hash=record.product_snapshot_hash,
+                embedding_model=record.embedding_model,
+                embedding_text=record.embedding_text,
+                metadata=dict(record.metadata),
+                score=score,
             )
-            for row in rows
+            for record, score in ranked[:top_k]
+            if score > 0.0
         ]
+
+    def _latest_product_catalog_embeddings_for_products(
+        self,
+        *,
+        embedding_model: str,
+        product_ids: list[str],
+    ) -> list[ProductCatalogEmbeddingRecord]:
+        if not product_ids:
+            return []
+        unique_ids = list(dict.fromkeys(product_ids))
+        records = self._select_embeddings_for_products(
+            embedding_model=embedding_model,
+            product_ids=unique_ids,
+        )
+        latest_by_product: dict[str, ProductCatalogEmbeddingRecord] = {}
+        for record in records:
+            current = latest_by_product.get(record.product_id)
+            if current is None or (record.updated_at, record.created_at) > (
+                current.updated_at,
+                current.created_at,
+            ):
+                latest_by_product[record.product_id] = record
+        return list(latest_by_product.values())
+
+    def _select_embeddings_for_products(
+        self,
+        *,
+        embedding_model: str,
+        product_ids: list[str],
+    ) -> list[ProductCatalogEmbeddingRecord]:
+        query = self.client.table(self.embeddings_table).select("*").eq(
+            "embedding_model", embedding_model
+        )
+        if hasattr(query, "in_"):
+            query = query.in_("product_id", product_ids)
+            rows = cast(list[dict[str, Any]], query.execute().data)
+        else:
+            rows = [
+                row
+                for row in cast(list[dict[str, Any]], query.execute().data)
+                if str(row.get("product_id")) in set(product_ids)
+            ]
+        records = [self._map_product_catalog_embedding(row) for row in rows]
+        return sorted(records, key=lambda record: (record.updated_at, record.created_at))
 
     def _select(
         self,

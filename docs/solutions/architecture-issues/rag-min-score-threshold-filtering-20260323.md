@@ -4,7 +4,7 @@ category: "architecture-issues"
 date: "2026-03-23"
 tags: ["rag", "hybrid-search", "rrf", "score-threshold", "retrieval-quality", "bm25", "pgvector"]
 components: ["src/invproc/api.py", "src/invproc/cli.py", "CatalogRetrievalService", "CatalogQueryRequest"]
-last_refreshed: "2026-03-27"
+last_refreshed: "2026-03-28"
 symptoms:
   - "Query for 'lapte' (milk) returned 'TURTA DULCE VISINA' (cherry gingerbread) at position 10"
   - "Top-2 relevant results had RRF scores ~0.033; positions 3-20 had flat noise band 0.013-0.016"
@@ -44,19 +44,19 @@ With `match_threshold=0.0`, all 20 results return. With `match_threshold=0.02`, 
 
 - Called `POST /internal/rag/query` with `top_k=20`; observed score distribution showing a clear ~50% cliff between positions 2 and 3
 - Confirmed all three modes (semantic, lexical, hybrid) produced identical ordering for this query — the issue was not mode-specific
-- Traced the code: `CatalogQueryRequest` had no `min_score` field; `retrieval_service.query()` was called without `match_threshold`
+- Traced the code: `CatalogQueryRequest` had no per-request threshold field; `retrieval_service.query()` was called without `match_threshold`
 - Confirmed `match_threshold` was already implemented in `CatalogRetrievalService.query()` and used in the filter predicate — just never exposed
 
 ## Fix
 
-**`src/invproc/api.py` — add `min_score` to query request model:**
+**`src/invproc/api.py` — add a public per-request threshold field to the query request model:**
 
 ```python
 class CatalogQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     search_mode: Literal["semantic", "lexical", "hybrid"] = Field(default="hybrid")
-    min_score: float = Field(default=0.02, ge=0.0, le=1.0)  # added
+    match_threshold: float = Field(default=0.02, ge=0.0, le=1.0)  # canonical public field
 ```
 
 **Pass it through to the service call:**
@@ -67,11 +67,11 @@ result = await run_in_threadpool(
     payload.query,
     top_k=payload.top_k,
     mode=payload.search_mode,
-    match_threshold=payload.min_score,  # added
+    match_threshold=payload.match_threshold,
 )
 ```
 
-**`src/invproc/cli.py` — add `--min-score` option:**
+**`src/invproc/cli.py` — add `--min-score` option for the CLI surface:**
 
 ```python
 min_score: float = typer.Option(
@@ -94,21 +94,23 @@ This learning still applies to query-time retrieval surfaces:
 - `POST /internal/rag/query`
 - `python -m invproc rag query ...`
 
+As of March 28, 2026, the public API contract names this field `match_threshold` while still accepting legacy `min_score` as an input alias for backward compatibility. The CLI still uses `--min-score`.
+
 It does **not** define the default behavior for `rag eval` or `POST /internal/rag/eval`. As of March 27, 2026, eval inherits the retrieval service's runtime threshold when `min_score` is omitted, and only overrides it when the caller passes an explicit value.
 
 ## Caveats
 
 - Default `0.02` is tuned for a ~20-product catalog. As the catalog grows, RRF score distributions shift — re-evaluate the threshold after significant catalog growth and after running `./scripts/eval_rag.sh`.
 - RRF scores are relative rank weights, not raw cosine similarity. The right threshold value depends on catalog size, not on semantic distance.
-- Applying `min_score` too aggressively can drop valid matches and push eval metrics below documented thresholds (top-1 ≥ 55%, top-5 ≥ 85%). Re-run baseline eval after changing query defaults or runtime threshold configuration.
+- Applying the per-request threshold too aggressively can drop valid matches and push eval metrics below documented thresholds (top-1 ≥ 55%, top-5 ≥ 85%). Re-run baseline eval after changing query defaults or runtime threshold configuration.
 - Query and eval now intentionally differ in one important way:
-  query surfaces still default `min_score` to `0.02`, while eval surfaces treat `min_score` as optional and inherit the runtime retrieval threshold when omitted.
+  query surfaces still default the query threshold to `0.02`, while eval surfaces treat their threshold override as optional and inherit the runtime retrieval threshold when omitted.
 
 ## Prevention
 
 **Rule:** Every numeric threshold or policy knob inside a service method must appear in the corresponding request model AND CLI within the same PR. "Internal default" is not a valid permanent state.
 
-**Detection test:** Integration test — call the API with `min_score=0.9` on a catalog where all products score < 0.9 and assert the result set is empty. Fails immediately if the field is not wired through.
+**Detection test:** Integration test — call the API with `match_threshold=0.9` on a catalog where all products score < 0.9 and assert the result set is empty. Fails immediately if the field is not wired through.
 
 **Checklist item:** "Every service-level threshold param is exposed in the API request model AND the CLI command — verify both, not just one. If one surface intentionally inherits the runtime default while another sets an explicit default, document that difference."
 

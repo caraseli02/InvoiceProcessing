@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any, Optional
 
+from invproc.catalog_sync import CATALOG_EMBEDDING_TEXT_VERSION
 from invproc.rag.retrieval import EmbeddingClient
 from invproc.repositories.base import (
     InvoiceImportRepository,
@@ -18,14 +20,113 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def build_catalog_embedding_text(record: ProductSyncRecord) -> str:
-    """Assemble the canonical V1 catalog embedding text."""
+_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+_TEA_TOKENS = frozenset({"ceai", "tea"})
+_FRUIT_TEA_TOKENS = frozenset(
+    {
+        "afine",
+        "capsuni",
+        "fructe",
+        "fruits",
+        "lamaie",
+        "lamai",
+        "portocala",
+        "zmeura",
+    }
+)
+_HERBAL_TEA_TOKENS = frozenset({"baby", "bebe", "ghimbir", "menta", "musetel", "plante"})
+_PRODUCE_TOKENS = frozenset(
+    {
+        "ardei",
+        "castraveti",
+        "cherry",
+        "legume",
+        "morcov",
+        "morcovi",
+        "rosie",
+        "rosii",
+        "salata",
+        "spanac",
+    }
+)
+
+
+def _normalized_tokens(*values: str | None) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        tokens.update(match.group(0).lower() for match in _TOKEN_RE.finditer(value))
+    return tokens
+
+
+def _append_unique(parts: list[str], *values: str) -> None:
+    seen = {part.casefold() for part in parts if part}
+    for value in values:
+        normalized = " ".join(value.split())
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        parts.append(normalized)
+        seen.add(key)
+
+
+def infer_catalog_embedding_context(record: ProductSyncRecord) -> dict[str, Any]:
+    """Infer lightweight family/category hints for better retrieval recall."""
+    tokens = _normalized_tokens(record.name, record.category)
+    effective_category = record.category.strip() if record.category else None
+    hints: list[str] = []
+    family: str | None = None
+    family_variants: list[str] = []
+
+    if tokens & _TEA_TOKENS:
+        family = "tea"
+        _append_unique(hints, "tea", "ceai", "bauturi")
+        if effective_category is None:
+            effective_category = "Beverages"
+        if tokens & _FRUIT_TEA_TOKENS:
+            family_variants.append("fruit_tea")
+            _append_unique(hints, "ceai de fructe", "fruit tea", "fructe", "fruit")
+        elif tokens & _HERBAL_TEA_TOKENS:
+            family_variants.append("herbal_tea")
+            _append_unique(hints, "ceai de plante", "herbal tea", "plante")
+
+    if effective_category is None and tokens & _PRODUCE_TOKENS:
+        effective_category = "Produce"
+        family = family or "produce"
+        _append_unique(hints, "produce", "vegetables", "legume")
+
+    return {
+        "effective_category": effective_category,
+        "family": family,
+        "family_variant": family_variants[0] if family_variants else None,
+        "family_variants": family_variants,
+        "hint_terms": hints,
+    }
+
+
+def build_catalog_embedding_text(
+    record: ProductSyncRecord,
+    *,
+    category_override: str | None = None,
+) -> str:
+    """Assemble the canonical catalog embedding text."""
+    enrichment = infer_catalog_embedding_context(record)
+    category_text = category_override.strip() if category_override else ""
+    if not category_text:
+        category_text = record.category.strip() if record.category else ""
+    if not category_text:
+        category_text = enrichment["effective_category"] or ""
+    hint_terms = enrichment["hint_terms"] if enrichment["family"] == "tea" else []
     parts = [
         record.name.strip(),
         record.barcode.strip() if record.barcode else "",
-        record.category.strip() if record.category else "",
+        category_text,
         record.uom.strip() if record.uom else "",
     ]
+    _append_unique(parts, *hint_terms)
     return " ".join(part for part in parts if part)
 
 
@@ -82,7 +183,22 @@ class CatalogSyncWorker:
         if record is None:
             return CatalogSyncJobResult(status="idle")
 
-        embedding_text = build_catalog_embedding_text(record)
+        enrichment = infer_catalog_embedding_context(record)
+        canonical_category = record.category
+        if canonical_category is None and enrichment["effective_category"] is not None:
+            try:
+                updated_product = self.repository.backfill_product_category(
+                    product_id=record.product_id,
+                    category=enrichment["effective_category"],
+                )
+            except KeyError:
+                canonical_category = enrichment["effective_category"]
+            else:
+                canonical_category = updated_product.category
+        embedding_text = build_catalog_embedding_text(
+            record,
+            category_override=canonical_category,
+        )
         try:
             embedding = self.embedding_client.embed(
                 model=record.embedding_model,
@@ -98,7 +214,13 @@ class CatalogSyncWorker:
                     metadata={
                         "name": record.name,
                         "barcode": record.barcode,
-                        "category": record.category,
+                        "category": canonical_category,
+                        "effective_category": canonical_category or enrichment["effective_category"],
+                        "family": enrichment["family"],
+                        "family_variant": enrichment["family_variant"],
+                        "family_variants": list(enrichment["family_variants"]),
+                        "hint_terms": list(enrichment["hint_terms"]),
+                        "embedding_text_version": CATALOG_EMBEDDING_TEXT_VERSION,
                         "uom": record.uom,
                         "supplier": record.supplier,
                         "price_eur": record.price_eur,

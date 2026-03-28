@@ -4,6 +4,7 @@ category: "architecture-issues"
 date: "2026-03-27"
 tags: ["rag", "eval-harness", "snapshots", "baselines", "cli-api-parity", "match-threshold", "regression-reporting"]
 components: ["src/invproc/cli.py", "src/invproc/api.py", "src/invproc/rag/eval.py", "src/invproc/rag/transport.py", "tests/test_rag_backend.py", "docs/eval-baselines/README.md"]
+last_refreshed: "2026-03-28"
 symptoms:
   - "RAG eval baselines could drift from live retrieval behavior when eval forced min_score instead of inheriting the runtime threshold"
   - "Explicit --compare-to baseline files could be diffed even when they came from incompatible fixture content or eval settings"
@@ -49,7 +50,7 @@ The fix was to preserve that rule end-to-end instead of overriding it at the CLI
 
 In practice:
 
-- `EvalRequest.min_score` became optional in [`src/invproc/api.py`](/Users/vladislavcaraseli/Documents/InvoiceProcessing/src/invproc/api.py)
+- `EvalRequest.match_threshold` became optional in [`src/invproc/api.py`](/Users/vladislavcaraseli/Documents/InvoiceProcessing/src/invproc/api.py) and still accepts legacy `min_score` as an input alias
 - `rag eval --min-score` became optional in [`src/invproc/cli.py`](/Users/vladislavcaraseli/Documents/InvoiceProcessing/src/invproc/cli.py)
 - both surfaces now pass `None` through when the user does not supply a threshold
 - `CatalogRagEvaluator.evaluate()` records the effective threshold actually used in the result payload and snapshot metadata

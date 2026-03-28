@@ -15,6 +15,8 @@ from invproc.repositories.base import (
     UpsertProductInput,
 )
 
+CATALOG_EMBEDDING_TEXT_VERSION = "v6"
+
 
 @dataclass(frozen=True)
 class CatalogSyncContext:
@@ -75,6 +77,7 @@ def build_product_snapshot_hash(
         "price_100": upsert_input.price_100,
         "markup": upsert_input.markup,
         "embedding_model": embedding_model,
+        "embedding_text_version": CATALOG_EMBEDDING_TEXT_VERSION,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
