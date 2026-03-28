@@ -135,6 +135,31 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
                 self._products_by_barcode[data.barcode] = product_id
             return product
 
+    def backfill_product_category(
+        self,
+        *,
+        product_id: str,
+        category: str,
+    ) -> ProductRecord:
+        with self._lock:
+            current = self._products.get(product_id)
+            if current is None:
+                raise KeyError(f"Unknown product_id: {product_id}")
+            if current.category is not None:
+                return current
+
+            updated = ProductRecord(
+                product_id=current.product_id,
+                barcode=current.barcode,
+                name=current.name,
+                normalized_name=current.normalized_name,
+                supplier=current.supplier,
+                category=category,
+                uom=current.uom,
+            )
+            self._products[product_id] = updated
+            return updated
+
     def add_stock_movement_in(
         self,
         *,
@@ -410,7 +435,7 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
-        records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
+        records = self._latest_product_catalog_embeddings(embedding_model=embedding_model)
         matches = [
             ProductCatalogEmbeddingMatch(
                 product_id=record.product_id,
@@ -432,7 +457,7 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
         embedding_model: str,
         top_k: int,
     ) -> list[ProductCatalogEmbeddingMatch]:
-        records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
+        records = self._latest_product_catalog_embeddings(embedding_model=embedding_model)
         if not records:
             return []
         documents = [record.embedding_text for record in records]
@@ -454,6 +479,22 @@ class InMemoryInvoiceImportRepository(InvoiceImportRepository):
             for record, score in ranked[:top_k]
             if score > 0.0
         ]
+
+    def _latest_product_catalog_embeddings(
+        self,
+        *,
+        embedding_model: str,
+    ) -> list[ProductCatalogEmbeddingRecord]:
+        records = self.list_product_catalog_embeddings(embedding_model=embedding_model)
+        latest_by_product: dict[str, ProductCatalogEmbeddingRecord] = {}
+        for record in records:
+            current = latest_by_product.get(record.product_id)
+            if current is None or (record.updated_at, record.created_at) > (
+                current.updated_at,
+                current.created_at,
+            ):
+                latest_by_product[record.product_id] = record
+        return list(latest_by_product.values())
 
     def list_product_sync_records(self) -> list[ProductSyncRecord]:
         """Return sync rows in insertion order for tests."""

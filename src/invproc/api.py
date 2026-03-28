@@ -26,7 +26,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from openai import APITimeoutError
 from slowapi import Limiter
@@ -94,7 +94,12 @@ class CatalogQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     search_mode: Literal["semantic", "lexical", "hybrid"] = Field(default="hybrid")
-    min_score: float = Field(default=0.02, ge=0.0, le=1.0)
+    match_threshold: float = Field(
+        default=0.02,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("match_threshold", "min_score"),
+    )
 
 
 class CatalogImportRequest(BaseModel):
@@ -112,7 +117,12 @@ class EvalRequest(BaseModel):
     cases: list[dict[str, Any]]
     embedding_model: Optional[str] = None
     top_k: int = Field(default=10, ge=1, le=50)
-    min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    match_threshold: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("match_threshold", "min_score"),
+    )
 
 
 # Used for debugging in multi-instance and/or multi-worker deployments.
@@ -596,7 +606,7 @@ async def query_catalog_embeddings(
         payload.query,
         top_k=payload.top_k,
         mode=payload.search_mode,
-        match_threshold=payload.min_score,
+        match_threshold=payload.match_threshold,
     )
     return serialize_query_result(result)
 
@@ -638,7 +648,7 @@ async def rag_eval_endpoint(
         evaluator.evaluate,
         cases,
         top_k=payload.top_k,
-        match_threshold=payload.min_score,
+        match_threshold=payload.match_threshold,
     )
     return serialize_eval_result(result)
 

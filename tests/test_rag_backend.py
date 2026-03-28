@@ -31,8 +31,13 @@ from invproc.rag import (
     build_catalog_embedding_text,
     rrf_merge,
 )
-from invproc.repositories.base import ProductCatalogEmbeddingMatch
-from invproc.repositories.base import ProductRecord, ProductSyncRecordInput, UpsertProductInput
+from invproc.repositories.base import (
+    ProductCatalogEmbeddingMatch,
+    ProductCatalogEmbeddingRecordInput,
+    ProductRecord,
+    ProductSyncRecordInput,
+    UpsertProductInput,
+)
 from invproc.repositories.memory import InMemoryInvoiceImportRepository
 
 runner = CliRunner()
@@ -229,6 +234,87 @@ def test_worker_success_upserts_vector_and_marks_sync_synced() -> None:
     assert len(embeddings) == 1
     assert embeddings[0].product_id == "prod_1"
     assert embeddings[0].embedding_model == record.embedding_model
+
+
+def test_worker_backfills_canonical_category_when_safe_inference_exists() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    product = repository.create_product(
+        UpsertProductInput(
+            name="CEAI ZMEURA MENTA",
+            barcode="4820012683001",
+            supplier="METRO",
+            price=2.5,
+            price_50=3.0,
+            price_70=3.5,
+            price_100=4.0,
+            markup=70,
+            category=None,
+            uom="BUC",
+        )
+    )
+    record, _ = repository.create_or_reuse_product_sync(
+        build_sync_record_input(
+            product_id=product.product_id,
+            name="CEAI ZMEURA MENTA",
+            barcode="4820012683001",
+            category=None,
+            uom="BUC",
+        )
+    )
+    worker = CatalogSyncWorker(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        worker_id="worker-a",
+    )
+
+    result = worker.process_one()
+
+    assert result.status == "synced"
+    product = repository.find_product_by_barcode("4820012683001")
+    assert product is not None
+    assert product.category == "Beverages"
+    embeddings = repository.list_product_catalog_embeddings()
+    assert embeddings[0].metadata["category"] == "Beverages"
+    assert "Beverages" in embeddings[0].embedding_text
+
+
+def test_worker_does_not_overwrite_existing_category_during_backfill() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    product = repository.create_product(
+        UpsertProductInput(
+            name="CEAI VERDE",
+            barcode="4820012683999",
+            supplier="METRO",
+            price=2.5,
+            price_50=3.0,
+            price_70=3.5,
+            price_100=4.0,
+            markup=70,
+            category="Snacks",
+            uom="BUC",
+        )
+    )
+    record, _ = repository.create_or_reuse_product_sync(
+        build_sync_record_input(
+            product_id=product.product_id,
+            name="CEAI VERDE",
+            barcode="4820012683999",
+            category=None,
+            uom="BUC",
+        )
+    )
+    worker = CatalogSyncWorker(
+        repository=repository,
+        embedding_client=OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True)),
+        worker_id="worker-a",
+    )
+
+    result = worker.process_one()
+
+    assert result.status == "synced"
+    refreshed = repository.find_product_by_barcode("4820012683999")
+    assert refreshed is not None
+    assert refreshed.category == "Snacks"
 
 
 def test_worker_failure_marks_row_failed_with_retry_metadata() -> None:
@@ -529,7 +615,7 @@ def test_api_rag_eval_endpoint_returns_metrics() -> None:
     assert body["top_1_hit_rate"] == 1.0
 
 
-def test_api_rag_eval_endpoint_respects_min_score() -> None:
+def test_api_rag_eval_endpoint_respects_match_threshold() -> None:
     from pydantic import SecretStr
 
     config = InvoiceConfig(
@@ -579,7 +665,7 @@ def test_api_rag_eval_endpoint_respects_min_score() -> None:
                 "cases": [
                     {"query": "greek yogurt order", "expected_product_id": "prod_1"}
                 ],
-                "min_score": 1.0,
+                "match_threshold": 1.0,
             },
             headers={"Authorization": "Bearer test-internal-key"},
         )
@@ -651,6 +737,65 @@ def test_api_rag_eval_endpoint_uses_service_default_threshold_when_min_score_omi
     assert body["match_threshold"] == 1.0
     assert body["top_1_hits"] == 0
     assert body["cases"][0]["top_results"] == []
+
+
+def test_api_rag_eval_endpoint_accepts_legacy_min_score_alias() -> None:
+    from pydantic import SecretStr
+
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-EVAL-LEGACY-THRESHOLD",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-eval-legacy-threshold",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        eval_response = client.post(
+            "/internal/rag/eval",
+            json={
+                "cases": [
+                    {"query": "greek yogurt order", "expected_product_id": "prod_1"}
+                ],
+                "min_score": 1.0,
+            },
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert eval_response.status_code == 200
+    assert eval_response.json()["match_threshold"] == 1.0
 
 
 def test_cli_rag_query_and_eval_surfaces_return_json(
@@ -1187,6 +1332,69 @@ def test_api_rag_query_accepts_search_mode_field() -> None:
     assert lexical.json()["matches"][0]["product_id"] == "prod_1"
 
 
+def test_api_rag_query_accepts_match_threshold_and_legacy_min_score() -> None:
+    from pydantic import SecretStr
+
+    config = InvoiceConfig(
+        _env_file=None,
+        mock=True,
+        catalog_sync_enabled=True,
+        internal_api_keys=SecretStr("test-internal-key"),
+    )
+    resources = build_app_resources(config)
+    app_instance = create_app(resources=resources)
+    service = InvoiceImportService(
+        config=config,
+        repository=resources.import_repository,
+        catalog_sync_producer=resources.catalog_sync_producer,
+    )
+    service.import_rows(
+        InvoiceImportRequest.model_validate(
+            {
+                "invoice_meta": {
+                    "supplier": "METRO",
+                    "invoice_number": "INV-QUERY-THRESHOLD",
+                    "date": "2026-03-20",
+                },
+                "rows": [
+                    {
+                        "row_id": "r1",
+                        "name": "Greek Yogurt",
+                        "barcode": "123456",
+                        "quantity": 2,
+                        "line_total_lei": 40.0,
+                        "weight_kg": 0.5,
+                    }
+                ],
+            }
+        ),
+        idempotency_key="idem-query-threshold",
+    )
+
+    with TestClient(app_instance) as client:
+        client.post(
+            "/internal/rag/sync-pending?limit=10",
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        threshold_response = client.post(
+            "/internal/rag/query",
+            json={"query": "greek yogurt", "match_threshold": 1.0},
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+        legacy_response = client.post(
+            "/internal/rag/query",
+            json={"query": "greek yogurt", "min_score": 1.0},
+            headers={"Authorization": "Bearer test-internal-key"},
+        )
+
+    assert threshold_response.status_code == 200
+    assert threshold_response.json()["match_threshold"] == 1.0
+    assert threshold_response.json()["matches"] == []
+    assert legacy_response.status_code == 200
+    assert legacy_response.json()["match_threshold"] == 1.0
+    assert legacy_response.json()["matches"] == []
+
+
 def test_cli_rag_query_mode_flag_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     configure_cli_for_memory_backend(monkeypatch)
     repository = _get_cli_rag_resources(mock=True).import_repository
@@ -1638,7 +1846,61 @@ def test_build_catalog_embedding_text_omits_null_category() -> None:
     record = build_sync_record_input(name="CEAI VERDE", barcode=None, category=None, uom="BUC")
     sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
 
-    assert build_catalog_embedding_text(sync_record) == "CEAI VERDE BUC"
+    embedding_text = build_catalog_embedding_text(sync_record)
+
+    assert "CEAI VERDE" in embedding_text
+    assert "BUC" in embedding_text
+    assert "Beverages" in embedding_text
+    assert "tea" in embedding_text
+    assert "ceai" in embedding_text
+
+
+def test_build_catalog_embedding_text_adds_fruit_tea_hints_when_justified() -> None:
+    """Fruit-flavored tea products gain broader family hints for lexical recall."""
+    record = build_sync_record_input(
+        name="CEAI ZMEURA MENTA RIOBA",
+        barcode="4820012683001",
+        category=None,
+        uom="BUC",
+    )
+    sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
+
+    embedding_text = build_catalog_embedding_text(sync_record)
+
+    assert "ceai de fructe" in embedding_text
+    assert "fruit tea" in embedding_text
+    assert "fructe" in embedding_text
+    assert "tea" in embedding_text
+
+
+def test_build_catalog_embedding_text_keeps_tea_hints_when_category_is_present() -> None:
+    record = build_sync_record_input(
+        name="CEAI ZMEURA MENTA RIOBA",
+        barcode="4820012683001",
+        category="Beverages",
+        uom="BUC",
+    )
+    sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
+
+    embedding_text = build_catalog_embedding_text(sync_record)
+
+    assert "Beverages" in embedding_text
+    assert "ceai de fructe" in embedding_text
+    assert "fruit tea" in embedding_text
+
+
+def test_build_catalog_embedding_text_uses_category_override() -> None:
+    record = build_sync_record_input(
+        name="CEAI ZMEURA MENTA",
+        barcode="4820012683001",
+        category=None,
+        uom="BUC",
+    )
+    sync_record, _ = InMemoryInvoiceImportRepository().create_or_reuse_product_sync(record)
+
+    embedding_text = build_catalog_embedding_text(sync_record, category_override="Beverages")
+
+    assert "Beverages" in embedding_text
 
 
 def test_emit_product_sync_forwards_category_and_uom() -> None:
@@ -1886,3 +2148,132 @@ def test_eval_metro_catalog_hybrid_top5_hit_rate(tmp_path: Path) -> None:
         f"Hybrid top-5 hit rate {result.top_5_hit_rate:.0%} is below 80% threshold. "
         f"Failing cases: {[c for c in result.cases if not c['top_5_hit']]}"
     )
+
+
+def test_query_ceai_de_fructe_prefers_tea_products() -> None:
+    """Broad fruit-tea intent should resolve to tea products, not generic fruit snacks."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_ceai_null",
+        name="CEAI ZMEURA MENTA RIOBA",
+        barcode="4820012683001",
+        category=None,
+        uom="BUC",
+    )
+    seed_synced_product(
+        repository,
+        product_id="prod_fruit_cake",
+        name="TURTA CU FRUCTE",
+        barcode="4841259002002",
+        category="Snacks",
+        uom="BUC",
+    )
+    seed_synced_product(
+        repository,
+        product_id="prod_choco_fruit",
+        name="BOMBOANE FRUCTE",
+        barcode="4841259002003",
+        category="Snacks",
+        uom="BUC",
+    )
+    retrieval = _make_retrieval(repository)
+
+    result = retrieval.query("ceai de fructe", top_k=5, mode="hybrid")
+
+    assert result.matches
+    assert result.matches[0].product_id == "prod_ceai_null"
+
+
+def test_worker_persists_effective_category_for_null_category_products() -> None:
+    """Embedding metadata records inferred category/hints even when source category is null."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_no_cat_2",
+        name="ROSII CHERRY 250G",
+        barcode="4841000002001",
+        category=None,
+        uom="BUC",
+    )
+
+    embeddings = repository.list_product_catalog_embeddings(
+        embedding_model="text-embedding-3-small"
+    )
+    assert embeddings
+    metadata = embeddings[0].metadata
+
+    assert metadata["category"] == "Produce"
+    assert metadata["effective_category"] == "Produce"
+    assert metadata["family"] == "produce"
+    assert metadata["family_variant"] is None
+    assert "produce" in metadata["hint_terms"]
+
+
+def test_worker_persists_tea_family_hints_for_null_category_products() -> None:
+    """Embedding metadata records inferred tea family/category fields when source category is null."""
+    repository = InMemoryInvoiceImportRepository()
+    seed_synced_product(
+        repository,
+        product_id="prod_ceai_null",
+        name="CEAI ZMEURA MENTA",
+        barcode="4820012683001",
+        category=None,
+        uom="BUC",
+    )
+
+    embeddings = repository.list_product_catalog_embeddings(
+        embedding_model="text-embedding-3-small"
+    )
+    assert embeddings
+    metadata = embeddings[0].metadata
+
+    assert metadata["category"] == "Beverages"
+    assert metadata["effective_category"] == "Beverages"
+    assert metadata["family"] == "tea"
+    assert metadata["family_variant"] == "fruit_tea"
+    assert metadata["family_variants"] == ["fruit_tea"]
+    assert metadata["embedding_text_version"] == "v6"
+    assert "ceai de fructe" in metadata["hint_terms"]
+    assert "fructe" in metadata["hint_terms"]
+
+
+def test_retrieval_prefers_latest_embedding_snapshot_per_product() -> None:
+    repository = InMemoryInvoiceImportRepository()
+    embedding_client = OpenAIEmbeddingClient(InvoiceConfig(_env_file=None, mock=True))
+    older_text = "CEAI ZMEURA MENTA 4820012683001"
+    newer_text = "CEAI ZMEURA MENTA 4820012683001 Beverages tea ceai bauturi ceai de fructe fruit tea fructe fruit"
+    repository.upsert_product_catalog_embedding(
+        ProductCatalogEmbeddingRecordInput(
+            product_id="prod_ceai",
+            product_snapshot_hash="hash-old",
+            embedding_model="text-embedding-3-small",
+            embedding_text=older_text,
+            embedding=embedding_client.embed(model="text-embedding-3-small", text=older_text),
+            metadata={"embedding_text_version": "v2", "category": None},
+        )
+    )
+    repository.upsert_product_catalog_embedding(
+        ProductCatalogEmbeddingRecordInput(
+            product_id="prod_ceai",
+            product_snapshot_hash="hash-new",
+            embedding_model="text-embedding-3-small",
+            embedding_text=newer_text,
+            embedding=embedding_client.embed(model="text-embedding-3-small", text=newer_text),
+            metadata={"embedding_text_version": "v6", "category": "Beverages"},
+        )
+    )
+    retrieval = CatalogRetrievalService(
+        repository=repository,
+        embedding_client=embedding_client,
+        default_embedding_model="text-embedding-3-small",
+    )
+
+    lexical = retrieval.query("ceai de fructe", top_k=5, mode="lexical")
+    semantic = retrieval.query("ceai de fructe", top_k=5, mode="semantic")
+
+    assert lexical.matches
+    assert lexical.matches[0].product_snapshot_hash == "hash-new"
+    assert lexical.matches[0].metadata["embedding_text_version"] == "v6"
+    assert semantic.matches
+    assert semantic.matches[0].product_snapshot_hash == "hash-new"
