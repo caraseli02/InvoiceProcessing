@@ -1,0 +1,48 @@
+{
+  "schema_version": "rag-eval-snapshot-v1",
+  "generated_at": "2026-03-27T14:51:08.961937+00:00",
+  "fixture_name": "queries.json",
+  "search_mode": "lexical",
+  "top_k": 10,
+  "match_threshold": 0.0,
+  "mock": true,
+  "comparison_target": null,
+  "result": {
+    "total_queries": 1,
+    "top_1_hits": 1,
+    "top_5_hits": 1,
+    "top_k_hits": 1,
+    "top_1_hit_rate": 1.0,
+    "top_5_hit_rate": 1.0,
+    "top_k_hit_rate": 1.0,
+    "search_mode": "lexical",
+    "top_k": 10,
+    "match_threshold": 0.0,
+    "cases": [
+      {
+        "query": "yogurt",
+        "expected_product_id": "prod_yogurt",
+        "expected_name": "",
+        "ranked_product_ids": [
+          "prod_yogurt"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "lexical",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "prod_yogurt",
+        "top_result_embedding_text": "Greek Yogurt 123456 Dairy bucket",
+        "top_result_score": 0.28768207245178085,
+        "top_results": [
+          {
+            "product_id": "prod_yogurt",
+            "score": 0.28768207245178085,
+            "embedding_text": "Greek Yogurt 123456 Dairy bucket"
+          }
+        ]
+      }
+    ]
+  }
+}

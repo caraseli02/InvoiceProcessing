@@ -1,0 +1,589 @@
+{
+  "schema_version": "rag-eval-snapshot-v1",
+  "generated_at": "2026-03-28T08:08:46.445006+00:00",
+  "fixture_name": "rag_queries.json",
+  "fixture_hash": "35c76af820e38b83c675336c98d338156f7bfb1eeaf8040845415ff2e23907de",
+  "search_mode": "hybrid",
+  "top_k": 10,
+  "match_threshold": 0.0,
+  "mock": false,
+  "comparison_target": "docs/eval-baselines/2026-03-23-rag_queries.json",
+  "result": {
+    "total_queries": 15,
+    "top_1_hits": 10,
+    "top_5_hits": 15,
+    "top_k_hits": 15,
+    "top_1_hit_rate": 0.6666666666666666,
+    "top_5_hit_rate": 1.0,
+    "top_k_hit_rate": 1.0,
+    "search_mode": "hybrid",
+    "top_k": 10,
+    "match_threshold": 0.0,
+    "cases": [
+      {
+        "query": "halva cu arahide",
+        "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+        "expected_name": "HALVA ARAHIDE",
+        "ranked_product_ids": [
+          "1c4a2f7f-55be-4641-967f-616edd489b78",
+          "a7960b79-f5bf-4275-88bb-59f4d25868cb"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+        "top_result_embedding_text": "350G HALVA ARAHIDE VICTORITA 4841359000688",
+        "top_result_score": 0.09455662129016175,
+        "top_results": [
+          {
+            "product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+            "score": 0.09455662129016175,
+            "embedding_text": "350G HALVA ARAHIDE VICTORITA 4841359000688"
+          },
+          {
+            "product_id": "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+            "score": 0.058409723396172224,
+            "embedding_text": "350G HALVA VANILIE VICTORITA 4841359000664 CE"
+          }
+        ]
+      },
+      {
+        "query": "halva",
+        "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+        "expected_name": "HALVA",
+        "ranked_product_ids": [
+          "1c4a2f7f-55be-4641-967f-616edd489b78",
+          "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+          "43021303-7d4f-458c-bb7c-b20baa8153a9"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+        "top_result_embedding_text": "350G HALVA ARAHIDE VICTORITA 4841359000688 CE",
+        "top_result_score": 0.15599319067062933,
+        "top_results": [
+          {
+            "product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+            "score": 0.15599319067062933,
+            "embedding_text": "350G HALVA ARAHIDE VICTORITA 4841359000688 CE"
+          },
+          {
+            "product_id": "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+            "score": 0.10414013677364443,
+            "embedding_text": "350G HALVA VANILIE VICTORITA 4841359000664 CE"
+          },
+          {
+            "product_id": "43021303-7d4f-458c-bb7c-b20baa8153a9",
+            "score": 0.045799361928394185,
+            "embedding_text": "350G HALVA STAFIDE VICTORITA 4841359000671"
+          }
+        ]
+      },
+      {
+        "query": "halva victorita vanilie sau arahide",
+        "expected_product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+        "expected_name": "HALVA",
+        "ranked_product_ids": [
+          "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+          "1c4a2f7f-55be-4641-967f-616edd489b78"
+        ],
+        "top_1_hit": false,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+        "top_result_embedding_text": "350G HALVA VANILIE VICTORITA 4841359000664",
+        "top_result_score": 0.09455662129016175,
+        "top_results": [
+          {
+            "product_id": "a7960b79-f5bf-4275-88bb-59f4d25868cb",
+            "score": 0.09455662129016175,
+            "embedding_text": "350G HALVA VANILIE VICTORITA 4841359000664"
+          },
+          {
+            "product_id": "1c4a2f7f-55be-4641-967f-616edd489b78",
+            "score": 0.058409723396172224,
+            "embedding_text": "350G HALVA ARAHIDE VICTORITA 4841359000688 CE"
+          }
+        ]
+      },
+      {
+        "query": "ceai de fructe",
+        "expected_product_id": "",
+        "expected_name": "CEAI",
+        "ranked_product_ids": [
+          "b064add5-88d5-4210-8b01-3e49429bd480",
+          "5bec10f8-551d-4011-ad15-5dc8a8cfe5d3",
+          "6f7b7995-2693-4d22-b79c-92c5768e7c2d",
+          "aa47b3a4-bb79-4f82-b9f6-cec24dc638a5"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+        "top_result_embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660 Beverages tea ceai bauturi ceai de fructe fruit tea fructe fruit",
+        "top_result_score": 0.0626129726185719,
+        "top_results": [
+          {
+            "product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+            "score": 0.0626129726185719,
+            "embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660 Beverages tea ceai bauturi ceai de fructe fruit tea fructe fruit"
+          },
+          {
+            "product_id": "5bec10f8-551d-4011-ad15-5dc8a8cfe5d3",
+            "score": 0.061574904158859384,
+            "embedding_text": "200G CAIS&MIGDA CIOCO FRUVIT 4841866000324"
+          },
+          {
+            "product_id": "6f7b7995-2693-4d22-b79c-92c5768e7c2d",
+            "score": 0.03252247488101534,
+            "embedding_text": "200G CAISE CIOCO NEAGRA FRUVIT 4841866000317 BU"
+          },
+          {
+            "product_id": "aa47b3a4-bb79-4f82-b9f6-cec24dc638a5",
+            "score": 0.02877846790890269,
+            "embedding_text": "200G PRUNE CU NUCA CIOC RIFERO 4841488000139"
+          }
+        ]
+      },
+      {
+        "query": "CEAI",
+        "expected_product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+        "expected_name": "CEAI",
+        "ranked_product_ids": [
+          "b064add5-88d5-4210-8b01-3e49429bd480",
+          "13faba49-e37d-4131-a22a-a6b2d55333a2",
+          "bc536d88-aec9-4061-bab8-d745dad3132d",
+          "09d5f46a-8257-4d47-a043-0224c36110c6"
+        ],
+        "top_1_hit": false,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+        "top_result_embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660",
+        "top_result_score": 0.09467620524930022,
+        "top_results": [
+          {
+            "product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+            "score": 0.09467620524930022,
+            "embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660"
+          },
+          {
+            "product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+            "score": 0.09353216228216228,
+            "embedding_text": "24X2G CEAI LOVARE 1001 NOCI 4820097816508 CU"
+          },
+          {
+            "product_id": "bc536d88-aec9-4061-bab8-d745dad3132d",
+            "score": 0.058409723396172224,
+            "embedding_text": "500G COVRIGEI PICIUL CU MAC 4840008001205"
+          },
+          {
+            "product_id": "09d5f46a-8257-4d47-a043-0224c36110c6",
+            "score": 0.030536130536130537,
+            "embedding_text": "200G CAISE IN CIOCOLATA RIFERO 4841488000221 BU"
+          }
+        ]
+      },
+      {
+        "query": "lapte condensat",
+        "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+        "expected_name": "LAPTE CONDEN",
+        "ranked_product_ids": [
+          "6bec35d4-7f15-455f-b164-807b598b2ef8",
+          "164915eb-9fec-443c-8295-d470f9a9f788",
+          "ae692819-08d5-4b94-a00a-ca4584059e99"
+        ],
+        "top_1_hit": false,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "6bec35d4-7f15-455f-b164-807b598b2ef8",
+        "top_result_embedding_text": "370G LAPTE CONDEN INTEG ICINEA 4820103341949",
+        "top_result_score": 0.06402049075403121,
+        "top_results": [
+          {
+            "product_id": "6bec35d4-7f15-455f-b164-807b598b2ef8",
+            "score": 0.06402049075403121,
+            "embedding_text": "370G LAPTE CONDEN INTEG ICINEA 4820103341949"
+          },
+          {
+            "product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+            "score": 0.06016738602340008,
+            "embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966"
+          },
+          {
+            "product_id": "ae692819-08d5-4b94-a00a-ca4584059e99",
+            "score": 0.02877846790890269,
+            "embedding_text": "115G FICAT DE BATOG MK 4841012006118"
+          }
+        ]
+      },
+      {
+        "query": "re-comanda laptele de la saptamana trecuta",
+        "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+        "expected_name": "LAPTE",
+        "ranked_product_ids": [
+          "164915eb-9fec-443c-8295-d470f9a9f788",
+          "13faba49-e37d-4131-a22a-a6b2d55333a2",
+          "b064add5-88d5-4210-8b01-3e49429bd480",
+          "6bec35d4-7f15-455f-b164-807b598b2ef8"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+        "top_result_embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966",
+        "top_result_score": 0.05931459844503323,
+        "top_results": [
+          {
+            "product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+            "score": 0.05931459844503323,
+            "embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966"
+          },
+          {
+            "product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+            "score": 0.03252247488101534,
+            "embedding_text": "24X2G CEAI LOVARE 1001 NOCI 4820097816508 Beverages CU tea ceai bauturi"
+          },
+          {
+            "product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+            "score": 0.03149801587301587,
+            "embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660 Beverages tea ceai bauturi ceai de fructe fruit tea fructe fruit"
+          },
+          {
+            "product_id": "6bec35d4-7f15-455f-b164-807b598b2ef8",
+            "score": 0.029631255487269532,
+            "embedding_text": "370G LAPTE CONDEN INTEG ICINEA 4820103341949"
+          }
+        ]
+      },
+      {
+        "query": "ficat de cod",
+        "expected_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+        "expected_name": "FICAT DE COD",
+        "ranked_product_ids": [
+          "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+          "ae692819-08d5-4b94-a00a-ca4584059e99",
+          "164915eb-9fec-443c-8295-d470f9a9f788"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+        "top_result_embedding_text": "120G FICAT DE COD(BATOG) ORA 4841259001754",
+        "top_result_score": 0.12804098150806242,
+        "top_results": [
+          {
+            "product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+            "score": 0.12804098150806242,
+            "embedding_text": "120G FICAT DE COD(BATOG) ORA 4841259001754"
+          },
+          {
+            "product_id": "ae692819-08d5-4b94-a00a-ca4584059e99",
+            "score": 0.06016738602340008,
+            "embedding_text": "115G FICAT DE BATOG MK 4841012006118"
+          },
+          {
+            "product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+            "score": 0.02877846790890269,
+            "embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966"
+          }
+        ]
+      },
+      {
+        "query": "4841259001754",
+        "expected_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+        "expected_name": "FICAT DE COD",
+        "ranked_product_ids": [
+          "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+          "c9454588-3813-48b0-968a-13a2a550635a",
+          "de80fd69-51e0-4504-a6b9-bce99b93c925"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+        "top_result_embedding_text": "120G FICAT DE COD(BATOG) ORA 4841259001754",
+        "top_result_score": 0.1251497621143166,
+        "top_results": [
+          {
+            "product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+            "score": 0.1251497621143166,
+            "embedding_text": "120G FICAT DE COD(BATOG) ORA 4841259001754"
+          },
+          {
+            "product_id": "c9454588-3813-48b0-968a-13a2a550635a",
+            "score": 0.05931459844503323,
+            "embedding_text": "450G FURSEC MOLDOVENESTI FL 4840843028146 CA"
+          },
+          {
+            "product_id": "de80fd69-51e0-4504-a6b9-bce99b93c925",
+            "score": 0.03252247488101534,
+            "embedding_text": "900G HRISCA ORA 4841259000894 BU"
+          }
+        ]
+      },
+      {
+        "query": "seminte floarea soarelui",
+        "expected_product_id": "2c21fb1a-fb53-41ce-9a7a-f7dbc627e505",
+        "expected_name": "SEM FL",
+        "ranked_product_ids": [
+          "2c21fb1a-fb53-41ce-9a7a-f7dbc627e505",
+          "cecf5fc6-8835-432b-a547-aae81c05fe67",
+          "22789c8b-f8de-4c0a-898e-d43c61183725",
+          "9c9ef548-3120-4e0e-b282-37a9e86b5f3d"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "2c21fb1a-fb53-41ce-9a7a-f7dbc627e505",
+        "top_result_embedding_text": "180G SEM FL SOARE SAN SANICI 4820182068980 CM",
+        "top_result_score": 0.06402049075403121,
+        "top_results": [
+          {
+            "product_id": "2c21fb1a-fb53-41ce-9a7a-f7dbc627e505",
+            "score": 0.06402049075403121,
+            "embedding_text": "180G SEM FL SOARE SAN SANICI 4820182068980 CM"
+          },
+          {
+            "product_id": "cecf5fc6-8835-432b-a547-aae81c05fe67",
+            "score": 0.030536130536130537,
+            "embedding_text": "50G AMESTEC DE PLANTE BABY FL 4841326002868 CU"
+          },
+          {
+            "product_id": "22789c8b-f8de-4c0a-898e-d43c61183725",
+            "score": 0.029631255487269532,
+            "embedding_text": "500G COVRIGEI PICIUL VANILIE 4840008001199 BU"
+          },
+          {
+            "product_id": "9c9ef548-3120-4e0e-b282-37a9e86b5f3d",
+            "score": 0.02877846790890269,
+            "embedding_text": "400G TOCANA DE DOVLECEI VIS 4840019001423"
+          }
+        ]
+      },
+      {
+        "query": "turta dulce cu prune",
+        "expected_product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+        "expected_name": "TURTA DULCE",
+        "ranked_product_ids": [
+          "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+          "a4133a5a-fbf3-47fa-8c16-5b8f84d45e75",
+          "aa47b3a4-bb79-4f82-b9f6-cec24dc638a5"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+        "top_result_embedding_text": "300G TURTA DULCE LUXUS PRUNE 4840008004213 PG",
+        "top_result_score": 0.06402049075403121,
+        "top_results": [
+          {
+            "product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+            "score": 0.06402049075403121,
+            "embedding_text": "300G TURTA DULCE LUXUS PRUNE 4840008004213 PG"
+          },
+          {
+            "product_id": "a4133a5a-fbf3-47fa-8c16-5b8f84d45e75",
+            "score": 0.06016738602340008,
+            "embedding_text": "300G TURTA DULCE VISINA CAHULP 4840501004956"
+          },
+          {
+            "product_id": "aa47b3a4-bb79-4f82-b9f6-cec24dc638a5",
+            "score": 0.02877846790890269,
+            "embedding_text": "200G PRUNE CU NUCA CIOC RIFERO 4841488000139"
+          }
+        ]
+      },
+      {
+        "query": "turta dulce",
+        "expected_product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+        "expected_name": "TURTA DULCE",
+        "ranked_product_ids": [
+          "a4133a5a-fbf3-47fa-8c16-5b8f84d45e75",
+          "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+          "a0135396-7152-4960-9674-f1c25c33bf43"
+        ],
+        "top_1_hit": false,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "a4133a5a-fbf3-47fa-8c16-5b8f84d45e75",
+        "top_result_embedding_text": "300G TURTA DULCE VISINA CAHULP 4840501004956",
+        "top_result_score": 0.12467003517966672,
+        "top_results": [
+          {
+            "product_id": "a4133a5a-fbf3-47fa-8c16-5b8f84d45e75",
+            "score": 0.12467003517966672,
+            "embedding_text": "300G TURTA DULCE VISINA CAHULP 4840501004956"
+          },
+          {
+            "product_id": "894ef2ea-10eb-4c92-8eee-9328db7da05e",
+            "score": 0.12370571837519585,
+            "embedding_text": "300G TURTA DULCE LUXUS PRUNE 4840008004213"
+          },
+          {
+            "product_id": "a0135396-7152-4960-9674-f1c25c33bf43",
+            "score": 0.02877846790890269,
+            "embedding_text": "0.75L SPUM LACR DULCE DULCE 4840013008701 CU"
+          }
+        ]
+      },
+      {
+        "query": "gris grau",
+        "expected_product_id": "f43535ca-395c-4644-9247-858fb922f98a",
+        "expected_name": "ARNAUT GRAU",
+        "ranked_product_ids": [
+          "f55eefae-fb53-45e0-925f-1c0a382549d1",
+          "f43535ca-395c-4644-9247-858fb922f98a",
+          "662c4aff-6a60-4f1f-b574-d5972a26dc7d"
+        ],
+        "top_1_hit": false,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "f55eefae-fb53-45e0-925f-1c0a382549d1",
+        "top_result_embedding_text": "900G GRIS BUNETTO 4840747003317 IM",
+        "top_result_score": 0.06402049075403121,
+        "top_results": [
+          {
+            "product_id": "f55eefae-fb53-45e0-925f-1c0a382549d1",
+            "score": 0.06402049075403121,
+            "embedding_text": "900G GRIS BUNETTO 4840747003317 IM"
+          },
+          {
+            "product_id": "f43535ca-395c-4644-9247-858fb922f98a",
+            "score": 0.06016738602340008,
+            "embedding_text": "900G ARNAUT GRAU BUNETTO 4840747000781"
+          },
+          {
+            "product_id": "662c4aff-6a60-4f1f-b574-d5972a26dc7d",
+            "score": 0.02877846790890269,
+            "embedding_text": "400G COVRIGEI GLAZURATI CU MAC 4840008011037 PG"
+          }
+        ]
+      },
+      {
+        "query": "ceai pentru bebelusi plante",
+        "expected_product_id": "cecf5fc6-8835-432b-a547-aae81c05fe67",
+        "expected_name": "AMESTEC DE PLANTE BABY",
+        "ranked_product_ids": [
+          "cecf5fc6-8835-432b-a547-aae81c05fe67",
+          "13faba49-e37d-4131-a22a-a6b2d55333a2",
+          "b064add5-88d5-4210-8b01-3e49429bd480",
+          "22789c8b-f8de-4c0a-898e-d43c61183725"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "cecf5fc6-8835-432b-a547-aae81c05fe67",
+        "top_result_embedding_text": "50G AMESTEC DE PLANTE BABY FL 4841326002868 CU",
+        "top_result_score": 0.06402049075403121,
+        "top_results": [
+          {
+            "product_id": "cecf5fc6-8835-432b-a547-aae81c05fe67",
+            "score": 0.06402049075403121,
+            "embedding_text": "50G AMESTEC DE PLANTE BABY FL 4841326002868 CU"
+          },
+          {
+            "product_id": "13faba49-e37d-4131-a22a-a6b2d55333a2",
+            "score": 0.030090497737556562,
+            "embedding_text": "24X2G CEAI LOVARE 1001 NOCI 4820097816508 Beverages CU tea ceai bauturi"
+          },
+          {
+            "product_id": "b064add5-88d5-4210-8b01-3e49429bd480",
+            "score": 0.03007688828584351,
+            "embedding_text": "50G CEAI ZMEURA MENTA RIOBA 4820071644660 Beverages tea ceai bauturi ceai de fructe fruit tea fructe fruit"
+          },
+          {
+            "product_id": "22789c8b-f8de-4c0a-898e-d43c61183725",
+            "score": 0.02877846790890269,
+            "embedding_text": "500G COVRIGEI PICIUL VANILIE 4840008001199 BU"
+          }
+        ]
+      },
+      {
+        "query": "4820012682966",
+        "expected_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+        "expected_name": "LAPTE CONDEN",
+        "ranked_product_ids": [
+          "164915eb-9fec-443c-8295-d470f9a9f788",
+          "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+          "de80fd69-51e0-4504-a6b9-bce99b93c925",
+          "c9454588-3813-48b0-968a-13a2a550635a"
+        ],
+        "top_1_hit": true,
+        "top_5_hit": true,
+        "top_k_hit": true,
+        "search_mode": "hybrid",
+        "top_k": 10,
+        "match_threshold": 0.0,
+        "top_result_product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+        "top_result_embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966",
+        "top_result_score": 0.09365174624130074,
+        "top_results": [
+          {
+            "product_id": "164915eb-9fec-443c-8295-d470f9a9f788",
+            "score": 0.09365174624130074,
+            "embedding_text": "370G LAPTE CONDEN FIERT IRISK 4820012682966"
+          },
+          {
+            "product_id": "9cdd8a1c-144e-4f24-89ec-aa4740d05bb4",
+            "score": 0.06203414640914641,
+            "embedding_text": "120G FICAT DE COD(BATOG) ORA 4841259001754"
+          },
+          {
+            "product_id": "de80fd69-51e0-4504-a6b9-bce99b93c925",
+            "score": 0.03252247488101534,
+            "embedding_text": "900G HRISCA ORA 4841259000894 BU"
+          },
+          {
+            "product_id": "c9454588-3813-48b0-968a-13a2a550635a",
+            "score": 0.02877846790890269,
+            "embedding_text": "450G FURSEC MOLDOVENESTI FL 4840843028146 CA"
+          }
+        ]
+      }
+    ]
+  }
+}
