@@ -22,6 +22,18 @@ Repository-specific instructions for coding agents working in this project.
   - `### Deploy Verification Plan`
 - Avoid placeholder evidence (`TBD`, `TODO`, `N/A`).
 
+## Project Status Hygiene (Required)
+- `docs/project-status.md` is the repo control-tower view for:
+  - current priorities
+  - active work
+  - recently completed work
+  - next up
+- If a PR starts, completes, supersedes, or reprioritizes tracked work, update both:
+  - the controlling file under `docs/plans/`
+  - `docs/project-status.md`
+- Do not overload `README.md` as the roadmap and do not treat `docs/solutions/` as the priority queue.
+- If the work does not affect current sequencing or tracked work state, note that explicitly in the PR rather than updating `docs/project-status.md` unnecessarily.
+
 ## Required Branch Protection Checks (`main`)
 - `lint`
 - `typecheck`

@@ -43,6 +43,15 @@ Apply throughout all interactions: plans, explanations, code reviews, feedback. 
 - CI workflow path: `.github/workflows/ci.yml`
 - Policy reference: `docs/quality-gates.md`
 
+## Project Status Hygiene
+
+- Treat [`docs/project-status.md`](/Users/vladislavcaraseli/Documents/InvoiceProcessing/docs/project-status.md) as the repo control-tower view.
+- If a change starts, completes, supersedes, or reprioritizes tracked work, update:
+  - the controlling file in `docs/plans/`
+  - [`docs/project-status.md`](/Users/vladislavcaraseli/Documents/InvoiceProcessing/docs/project-status.md)
+- Do not use `README.md` as the roadmap and do not treat `docs/solutions/` as the priority queue.
+- If no project-control update is needed, state that explicitly when packaging the PR.
+
 ---
 
 ## Commands
@@ -123,7 +132,7 @@ Validation runs twice. First, Pydantic's `model_validator` on `Product` runs dur
 
 ## Key details to keep in mind
 
-- The `README.md` contains an older FastAPI blueprint (not the current CLI). The actual running code is entirely under `src/invproc/`.
+- `README.md` now contains operator-facing usage plus current backend RAG workflow notes, but it is not the roadmap. Use `docs/project-status.md` for current priorities and `docs/plans/` for implementation control.
 - `tests/` is active and enforces project coverage >= 80% via pytest config.
 - The system prompt in `llm_extractor.py:_get_system_prompt()` is METRO Cash & Carry-specific (Romanian column headers like "Cant.", "Pret unitar", "Valoare incl.TVA"). Generalizing to other invoice formats will require prompt changes.
 - `response_format={"type": "json_object"}` is used instead of Pydantic-native structured output (`client.chat.completions.parse`). The JSON is manually parsed and fed to the Pydantic model.
