@@ -13,6 +13,8 @@ Apply exactly one label to this PR:
 - [ ] `ruff check src/ tests/` passes locally
 - [ ] Coverage is at least 80%
 - [ ] `/health` smoke check works
+- [ ] Updated `docs/project-status.md` if current priorities, active work, recent completions, or next-up sequencing changed
+- [ ] Updated affected `docs/plans/` status/frontmatter if this PR completed, advanced, superseded, or reprioritized tracked work
 
 ### Feature Test Evidence
 Provide concrete evidence for feature changes (tests added/updated, commands run, behavior proven).
