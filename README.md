@@ -78,6 +78,38 @@ invproc process invoice.pdf --retry 3
 invproc process invoice.pdf --output results/invoice.json
 ```
 
+## Catalog RAG Workflow
+
+The backend now owns catalog sync, embeddings, retrieval, and eval for product grounding.
+
+Common commands:
+
+```bash
+# Queue catalog sync rows during import
+python -m invproc rag import invoice.json
+
+# Process pending embedding sync work
+python -m invproc rag sync-pending
+
+# Inspect queue health
+python -m invproc rag status
+
+# Query the catalog with hybrid retrieval
+python -m invproc rag query "ceai de fructe" --mode hybrid --top-k 5 --min-score 0.0
+
+# Evaluate retrieval quality against a fixture
+python -m invproc rag eval tests/fixtures/rag_queries_unit.json --mock
+```
+
+Important current behavior:
+
+- API request payloads use `match_threshold` as the canonical field name for retrieval filtering.
+- The CLI still uses `--min-score`.
+- Query responses may include both `category` and `effective_category`.
+  - `category` is the canonical stored product category.
+  - `effective_category` is the resolved retrieval category after safe fallback/backfill logic.
+- Embedding metadata includes `embedding_text_version` to make snapshot evolution visible during manual debugging.
+
 ## API Usage
 
 ### Local Development
@@ -123,6 +155,28 @@ GET /health
 ```
 
 Returns service health status (no authentication required).
+
+#### Internal Catalog RAG endpoints
+
+These backend-only endpoints are useful for manual retrieval validation and queue inspection:
+
+```bash
+GET  /internal/rag/status
+POST /internal/rag/query
+POST /internal/rag/eval
+POST /internal/rag/sync-pending
+```
+
+Example query payload:
+
+```json
+{
+  "query": "ceai de fructe",
+  "top_k": 5,
+  "search_mode": "hybrid",
+  "match_threshold": 0.0
+}
+```
 
 #### Extract Invoice
 ```bash
@@ -208,25 +262,18 @@ Then click **Authorize** in Swagger UI and paste `dev-key-12345` as the token.
 ## Testing
 
 ```bash
-# Run all tests
-pytest tests/ -v
+# Required repo quality gates
+python -m ruff check src/ tests/
+python -m mypy src/
+python -m pytest -q
 
-# Run specific test modules
+# Optional targeted runs
+pytest tests/test_rag_backend.py -q
 pytest tests/test_api.py -v
 pytest tests/test_cli.py -v
-
-# Run with coverage report
-pytest --cov=src/invproc --cov-report=html
-
-# View HTML coverage report
-open htmlcov/index.html
 ```
 
-**Test Coverage:**
-- API endpoints: 9 tests
-- CLI commands: 6 tests
-- End-to-end: 1 test
-- Total: 16 tests
+The repo currently enforces `pytest` coverage fail-under `80%`. Use the full quality-gate commands above before merge-ready changes.
 
 ## Linting & Type Checking
 

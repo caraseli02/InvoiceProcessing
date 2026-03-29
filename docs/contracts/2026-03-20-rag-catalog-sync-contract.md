@@ -1,7 +1,7 @@
 # RAG Catalog Sync Contract
 
 Date: 2026-03-20
-Status: updated for Phase 5 retrieval quality validation
+Status: updated for Phase 5 retrieval quality validation and March 28 retrieval follow-up
 Related plans:
 - `docs/plans/2026-03-20-001-feat-rag-whatsapp-catalog-sync-plan.md`
 - `docs/plans/2026-03-20-002-feat-rag-whatsapp-catalog-sync-phase-3-backend-rag-plan.md`
@@ -29,6 +29,8 @@ This document is the source of truth for:
 5. The React WhatsApp app is a downstream consumer only; it does not own embeddings, vector writes, retry workers, or retrieval jobs.
 6. Deduplication remains based on `product_id + product_snapshot_hash`.
 7. Vector rows are uniquely keyed by `product_id + product_snapshot_hash + embedding_model`.
+8. Retrieval returns at most one embedding row per product and model, preferring the latest synced row by `updated_at`/`created_at`.
+9. Safe inferred categories may be backfilled canonically during sync for conservative families such as tea -> `Beverages` and produce-like products -> `Produce`.
 
 ## Ownership Boundary
 
@@ -111,17 +113,19 @@ The producer writes one logical product snapshot payload per persisted product v
 
 ### Canonical embedding text
 
-V1 embedding text is assembled by the backend consumer from these fields, omitting null or empty values:
+Current embedding text is assembled by the backend consumer from these fields, omitting null or empty values:
 
 ```text
-{name} {barcode} {category} {uom}
+{name} {barcode} {resolved_category} {uom} {justified_hint_terms}
 ```
 
 Notes:
 
 - `name` is the only always-required semantic field.
-- `barcode`, `category`, and `uom` are optional in V1; missing values are skipped.
-- `supplier` and price fields are persisted for metadata, filtering, and future rendering, but are not part of the default V1 embedding text.
+- `resolved_category` prefers canonical category first, then safe inferred fallback when canonical category is missing.
+- `justified_hint_terms` are conservative family/category phrases inferred from product name and category. Current examples include tea-family phrases such as `ceai de fructe`, `fruit tea`, `ceai de plante`, and `herbal tea`.
+- `supplier` and price fields are persisted for metadata, filtering, and future rendering, but are not part of the default embedding text.
+- Embedding text versioning is part of the snapshot contract so text-assembly changes force a new snapshot hash.
 
 ## Snapshot Hash Contract
 
@@ -143,6 +147,7 @@ The hash input is normalized JSON over:
 - `price_100`
 - `markup`
 - `embedding_model`
+- `embedding_text_version`
 
 ### Rules
 
@@ -256,6 +261,12 @@ Constraints and indexes:
 - unique constraint on `product_id, product_snapshot_hash, embedding_model`
 - vector index deferred until scale or latency requires it
 - btree index on `product_id, updated_at desc`
+
+Retrieval semantics:
+
+- historical rows remain persisted for auditability and snapshot history
+- retrieval collapses those rows to the latest entry per `product_id` and `embedding_model` before ranking results
+- metadata may expose both canonical `category` and resolved `effective_category` for debugging
 
 ## Backend Worker Contract
 

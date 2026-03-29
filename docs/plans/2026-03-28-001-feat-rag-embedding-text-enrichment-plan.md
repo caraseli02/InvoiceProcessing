@@ -1,7 +1,7 @@
 ---
 title: feat: Enrich RAG embedding text with category and family hints
 type: feat
-status: active
+status: completed
 date: 2026-03-28
 ---
 
@@ -46,8 +46,8 @@ Improve product embedding text so broad queries like `ceai de fructe` map to tea
 
 ## Acceptance Criteria
 
-- [ ] Embedding text contains family/category hint terms for tea products when justified.
-- [ ] Products with `category = null` can still persist useful hint metadata when the family can be inferred safely.
-- [ ] Targeted regression tests cover the tea broad-query case.
-- [ ] Repo quality gates pass.
-- [ ] Eval output can be compared against the saved baseline and the result is summarized.
+- [x] Embedding text contains family/category hint terms for tea products when justified.
+- [x] Products with `category = null` can still persist useful hint metadata when the family can be inferred safely.
+- [x] Targeted regression tests cover the tea broad-query case.
+- [x] Repo quality gates pass.
+- [x] Eval output was compared and summarized; one saved unit baseline was found incompatible and documented as such.
