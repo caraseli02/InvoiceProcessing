@@ -1,7 +1,7 @@
 ---
 title: feat: Backfill inferred catalog category and prefer latest synced embedding per product
 type: feat
-status: active
+status: completed
 date: 2026-03-28
 plan_depth: deep
 ---
@@ -117,8 +117,8 @@ Finish the missing parts from the embedding enrichment rollout:
 
 ## Acceptance Criteria
 
-- [ ] Products with null category and safe inference are backfilled to canonical `category`.
-- [ ] Query responses stop showing stale embedding versions for products that have newer synced rows.
-- [ ] `category` and `effective_category` are aligned for the target tea case after resync.
-- [ ] `ceai de fructe` remains tea rank 1 after the latest-row preference change.
-- [ ] Full repo quality gates pass.
+- [x] Products with null category and safe inference are backfilled to canonical `category`.
+- [x] Query responses stop showing stale embedding versions for products that have newer synced rows.
+- [x] `category` and `effective_category` are aligned for the target tea case after resync.
+- [x] `ceai de fructe` remains tea rank 1 after the latest-row preference change.
+- [x] Full repo quality gates pass.
